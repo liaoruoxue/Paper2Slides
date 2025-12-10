@@ -5,10 +5,12 @@ Generates poster images or slides from RAG summary content.
 """
 from .config import (
     OutputType,
+    PosterFormat,
     PosterDensity,
     SlidesLength,
     StyleType,
     SLIDES_PAGE_RANGES,
+    POSTER_A0_DIMENSIONS,
     GenerationConfig,
     GenerationInput,
 )
@@ -24,10 +26,12 @@ from .content_planner import (
 __all__ = [
     # Config
     "OutputType",
+    "PosterFormat",
     "PosterDensity",
     "SlidesLength",
     "StyleType",
     "SLIDES_PAGE_RANGES",
+    "POSTER_A0_DIMENSIONS",
     "GenerationConfig",
     "GenerationInput",
     # Content Planner

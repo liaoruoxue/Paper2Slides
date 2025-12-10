@@ -44,6 +44,8 @@ def main():
                         help="Content type (default: paper)")
     parser.add_argument("--output", choices=["poster", "slides"], default="poster",
                         help="Output type (default: poster)")
+    parser.add_argument("--poster-format", choices=["landscape", "portrait_a0"], default="landscape",
+                        help="Poster format: landscape (16:9) or portrait_a0 (A0 vertical, 841x1189mm)")
     parser.add_argument("--style", default="doraemon",
                         help="Style: academic, doraemon, or custom description")
     parser.add_argument("--length", choices=["short", "medium", "long"], default="short",
@@ -94,6 +96,7 @@ def main():
         "input_path": input_path,
         "content_type": args.content,
         "output_type": args.output,
+        "poster_format": args.poster_format,
         "style": style_type,
         "custom_style": custom_style,
         "slides_length": args.length,

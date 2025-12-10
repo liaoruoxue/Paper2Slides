@@ -9,15 +9,19 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any
 from openai import OpenAI
 
-from .config import GenerationInput, OutputType
+from .config import GenerationInput, OutputType, PosterFormat
 from ..summary import FigureInfo, TableInfo
 from ..prompts.content_planning import (
     PAPER_SLIDES_PLANNING_PROMPT,
     PAPER_POSTER_PLANNING_PROMPT,
     PAPER_POSTER_DENSITY_GUIDELINES,
+    PAPER_POSTER_A0_PLANNING_PROMPT,
+    PAPER_POSTER_A0_LAYOUT_GUIDELINES,
     GENERAL_SLIDES_PLANNING_PROMPT,
     GENERAL_POSTER_PLANNING_PROMPT,
     GENERAL_POSTER_DENSITY_GUIDELINES,
+    GENERAL_POSTER_A0_PLANNING_PROMPT,
+    GENERAL_POSTER_A0_LAYOUT_GUIDELINES,
 )
 
 
@@ -156,8 +160,10 @@ class ContentPlanner:
             tables_index=tables_index,
             figures_index=figures_index,
             metadata={
-                "density": gen_input.config.poster_density.value 
+                "density": gen_input.config.poster_density.value
                           if gen_input.config.output_type == OutputType.POSTER else None,
+                "poster_format": gen_input.config.poster_format.value
+                                 if gen_input.config.output_type == OutputType.POSTER else None,
                 "page_range": gen_input.config.get_page_range()
                              if gen_input.config.output_type == OutputType.SLIDES else None,
             },
@@ -196,28 +202,46 @@ class ContentPlanner:
         tables_md: str,
         figure_images: List[Dict],
     ) -> List[Section]:
-        """Plan poster sections."""
+        """Plan poster sections (landscape or portrait A0)."""
         density = gen_input.config.poster_density.value
-        
-        # Select density guidelines and prompt template based on content type
+        is_a0 = gen_input.config.poster_format == PosterFormat.PORTRAIT_A0
+
+        # Select guidelines and template based on content type and format
         if gen_input.is_paper():
-            guidelines_map = PAPER_POSTER_DENSITY_GUIDELINES
-            template = PAPER_POSTER_PLANNING_PROMPT
+            density_guidelines = PAPER_POSTER_DENSITY_GUIDELINES.get(density, PAPER_POSTER_DENSITY_GUIDELINES["medium"])
+            if is_a0:
+                template = PAPER_POSTER_A0_PLANNING_PROMPT
+                layout_guidelines = PAPER_POSTER_A0_LAYOUT_GUIDELINES.get(density, PAPER_POSTER_A0_LAYOUT_GUIDELINES["medium"])
+            else:
+                template = PAPER_POSTER_PLANNING_PROMPT
+                layout_guidelines = None
         else:
-            guidelines_map = GENERAL_POSTER_DENSITY_GUIDELINES
-            template = GENERAL_POSTER_PLANNING_PROMPT
-        
-        density_guidelines = guidelines_map.get(density, guidelines_map["medium"])
-        
+            density_guidelines = GENERAL_POSTER_DENSITY_GUIDELINES.get(density, GENERAL_POSTER_DENSITY_GUIDELINES["medium"])
+            if is_a0:
+                template = GENERAL_POSTER_A0_PLANNING_PROMPT
+                layout_guidelines = GENERAL_POSTER_A0_LAYOUT_GUIDELINES.get(density, GENERAL_POSTER_A0_LAYOUT_GUIDELINES["medium"])
+            else:
+                template = GENERAL_POSTER_PLANNING_PROMPT
+                layout_guidelines = None
+
         # Build assets section based on available tables/figures
         assets_section = self._build_assets_section(tables_md, bool(figure_images))
-        
-        prompt = template.format(
-            density_guidelines=density_guidelines,
-            summary=self._truncate(summary, 10000),
-            assets_section=assets_section,
-        )
-        
+
+        # Format prompt based on template type
+        if is_a0:
+            prompt = template.format(
+                density_guidelines=density_guidelines,
+                layout_guidelines=layout_guidelines,
+                summary=self._truncate(summary, 10000),
+                assets_section=assets_section,
+            )
+        else:
+            prompt = template.format(
+                density_guidelines=density_guidelines,
+                summary=self._truncate(summary, 10000),
+                assets_section=assets_section,
+            )
+
         result = self._call_multimodal_llm(prompt, figure_images)
         return self._parse_sections(result, is_slides=False)
     

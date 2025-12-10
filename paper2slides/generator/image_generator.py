@@ -14,7 +14,7 @@ from typing import List, Optional
 from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .config import GenerationInput
+from .config import GenerationInput, PosterFormat
 from .content_planner import ContentPlan, Section
 from .providers import (
     ProviderFactory,
@@ -24,8 +24,11 @@ from .providers import (
 from ..prompts.image_generation import (
     STYLE_PROCESS_PROMPT,
     FORMAT_POSTER,
+    FORMAT_POSTER_A0,
     FORMAT_SLIDE,
     POSTER_STYLE_HINTS,
+    POSTER_A0_STYLE_HINTS,
+    POSTER_A0_LAYOUTS,
     SLIDE_STYLE_HINTS,
     SLIDE_LAYOUTS_ACADEMIC,
     SLIDE_LAYOUTS_DORAEMON,
@@ -136,34 +139,57 @@ class ImageGenerator:
         figure_images = self._load_figure_images(plan, gen_input.origin.base_path)
         style_name = gen_input.config.style.value
         custom_style = gen_input.config.custom_style
-        
+        poster_format = gen_input.config.poster_format
+
         # Process custom style with LLM if needed
         processed_style = None
         if style_name == "custom" and custom_style:
             processed_style = process_custom_style(custom_style)
             if not processed_style.valid:
                 raise ValueError(f"Invalid custom style: {processed_style.error}")
-        
+
         all_sections_md = self._format_sections_markdown(plan)
         all_images = self._filter_images(plan.sections, figure_images)
-        
+
         if plan.output_type == "poster":
-            result = self._generate_poster(style_name, processed_style, all_sections_md, all_images)
+            result = self._generate_poster(
+                style_name, processed_style, all_sections_md, all_images,
+                poster_format=poster_format,
+                density=gen_input.config.poster_density.value
+            )
             if save_callback and result:
                 save_callback(result[0], 0, 1)
             return result
         else:
             return self._generate_slides(plan, style_name, processed_style, all_sections_md, figure_images, max_workers, save_callback)
     
-    def _generate_poster(self, style_name, processed_style: Optional[ProcessedStyle], sections_md, images) -> List[GeneratedImage]:
-        """Generate 1 poster image."""
-        prompt = self._build_poster_prompt(
-            format_prefix=FORMAT_POSTER,
-            style_name=style_name,
-            processed_style=processed_style,
-            sections_md=sections_md,
-        )
-        
+    def _generate_poster(
+        self,
+        style_name,
+        processed_style: Optional[ProcessedStyle],
+        sections_md,
+        images,
+        poster_format: PosterFormat = PosterFormat.LANDSCAPE,
+        density: str = "medium"
+    ) -> List[GeneratedImage]:
+        """Generate 1 poster image (landscape 16:9 or portrait A0)."""
+        is_a0 = poster_format == PosterFormat.PORTRAIT_A0
+
+        if is_a0:
+            prompt = self._build_poster_a0_prompt(
+                style_name=style_name,
+                processed_style=processed_style,
+                sections_md=sections_md,
+                density=density,
+            )
+        else:
+            prompt = self._build_poster_prompt(
+                format_prefix=FORMAT_POSTER,
+                style_name=style_name,
+                processed_style=processed_style,
+                sections_md=sections_md,
+            )
+
         image_data, mime_type = self._call_model(prompt, images)
         return [GeneratedImage(section_id="poster", image_data=image_data, mime_type=mime_type)]
     
@@ -296,18 +322,65 @@ class ImageGenerator:
     def _build_poster_prompt(self, format_prefix, style_name, processed_style: Optional[ProcessedStyle], sections_md) -> str:
         """Build prompt for poster."""
         parts = [format_prefix]
-        
+
         if style_name == "custom" and processed_style:
             parts.append(f"Style: {self._format_custom_style_for_poster(processed_style)}")
             if processed_style.decorations:
                 parts.append(f"Decorations: {processed_style.decorations}")
         else:
             parts.append(POSTER_STYLE_HINTS.get(style_name, POSTER_STYLE_HINTS["academic"]))
-        
+
         parts.append(VISUALIZATION_HINTS)
         parts.append(POSTER_FIGURE_HINT)
         parts.append(f"---\nContent:\n{sections_md}")
-        
+
+        return "\n\n".join(parts)
+
+    def _format_custom_style_for_poster_a0(self, ps: ProcessedStyle) -> str:
+        """Format ProcessedStyle into style hints string for A0 portrait poster."""
+        parts = [
+            ps.style_name + ".",
+            "PORTRAIT A0 format (841mm x 1189mm, vertical layout).",
+            "English text only.",
+            "Use PROFESSIONAL sans-serif fonts for ALL text.",
+            f"LIMITED COLOR PALETTE (3-4 colors max): {ps.color_tone}.",
+            "Title bar at TOP with contrasting background.",
+            "Clear section headers with visual hierarchy.",
+            "Leave adequate whitespace for readability.",
+            POSTER_COMMON_STYLE_RULES,
+        ]
+        if ps.special_elements:
+            parts.append(ps.special_elements + ".")
+        return " ".join(parts)
+
+    def _build_poster_a0_prompt(
+        self,
+        style_name: str,
+        processed_style: Optional[ProcessedStyle],
+        sections_md: str,
+        density: str = "medium"
+    ) -> str:
+        """Build prompt for A0 portrait poster."""
+        parts = [FORMAT_POSTER_A0]
+
+        # Add style-specific hints for A0 format
+        if style_name == "custom" and processed_style:
+            parts.append(f"Style: {self._format_custom_style_for_poster_a0(processed_style)}")
+            if processed_style.decorations:
+                parts.append(f"Decorations: {processed_style.decorations}")
+        else:
+            # Use A0-specific style hints
+            style_hints = POSTER_A0_STYLE_HINTS.get(style_name, POSTER_A0_STYLE_HINTS["academic"])
+            parts.append(style_hints)
+
+        # Add layout guidelines based on density
+        layout_guide = POSTER_A0_LAYOUTS.get(density, POSTER_A0_LAYOUTS["medium"])
+        parts.append(layout_guide)
+
+        parts.append(VISUALIZATION_HINTS)
+        parts.append(POSTER_FIGURE_HINT)
+        parts.append(f"---\nContent:\n{sections_md}")
+
         return "\n\n".join(parts)
     
     def _build_slide_prompt(self, style_name, processed_style: Optional[ProcessedStyle], sections_md, layout_rule, slide_info, context_md) -> str:

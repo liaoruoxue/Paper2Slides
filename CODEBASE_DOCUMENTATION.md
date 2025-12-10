@@ -62,10 +62,24 @@ pip install google-generativeai
 python -m paper2slides \
   --input paper.pdf \           # 输入文件
   --output slides \             # slides 或 poster
+  --poster-format portrait_a0 \ # 海报格式：landscape (16:9) 或 portrait_a0 (A0竖向)
   --style academic \            # 风格：academic, doraemon, 或自定义
-  --length medium \             # 长度：short, medium, long
+  --length medium \             # 幻灯片长度：short, medium, long
+  --density medium \            # 海报密度：sparse, medium, dense
   --fast \                      # 快速模式（跳过 RAG）
   --parallel 2                  # 并行生成数量
+```
+
+#### 海报格式说明
+- `landscape`：16:9 横向海报（默认）
+- `portrait_a0`：A0 竖向学术海报（841mm x 1189mm）
+
+```bash
+# 生成 A0 竖向学术海报
+python -m paper2slides --input paper.pdf --output poster --poster-format portrait_a0 --style academic
+
+# 生成 A0 竖向 Doraemon 风格海报
+python -m paper2slides --input paper.pdf --output poster --poster-format portrait_a0 --style doraemon --density dense
 ```
 
 #### Web 模式（图形界面）
@@ -89,6 +103,7 @@ Paper2Slides/
 │   ├── raganything/      # RAG 引擎
 │   ├── summary/          # 内容提取
 │   ├── generator/        # 图像生成
+│   │   ├── config.py     # 配置类（OutputType, PosterFormat, StyleType等）
 │   │   ├── providers.py  # 图像生成提供商（OpenRouter/GoogleGenAI）
 │   │   ├── image_generator.py  # 图像生成主逻辑
 │   │   └── content_planner.py  # 内容规划
@@ -135,14 +150,14 @@ Paper2Slides/
        ▼
 ┌─────────────────────────────────┐
 │ 阶段4: Generate (图像生成)      │
-│ - 前2页顺序生成（建立风格）     │
-│ - 后续页面并行生成              │
+│ - 幻灯片：前2页顺序+后续并行    │
+│ - 海报：单张生成（支持横/竖向） │
 │ - 合成为PDF                     │
 └──────┬──────────────────────────┘
        │
        ▼
 ┌─────────────┐
-│  输出结果   │ slides.pdf + PNG序列
+│  输出结果   │ slides.pdf/poster.png + PDF
 └─────────────┘
 ```
 
@@ -153,6 +168,12 @@ Paper2Slides/
 ### 内置风格
 1. **academic** - 学术专业风格（深蓝色 + 白色背景）
 2. **doraemon** - 哆啦A梦友好风格（天蓝色 + 卡通元素）
+
+### 海报格式
+| 格式 | 尺寸 | 适用场景 |
+|------|------|----------|
+| `landscape` | 16:9 横向 | 快速概览、在线分享 |
+| `portrait_a0` | 841mm x 1189mm 竖向 | 学术会议、海报展示 |
 
 ### 自定义风格
 ```bash
@@ -171,16 +192,23 @@ python -m paper2slides \
 outputs/
 └── my_paper/                          # 项目名
     └── paper/                         # 内容类型
-        └── fast/                      # 模式
-            ├── checkpoint_rag.json    # 断点文件
+        └── normal/                    # 模式 (fast/normal)
+            ├── checkpoint_rag.json    # 断点文件（fast 模式无）
             ├── checkpoint_summary.json
-            └── slides_doraemon_medium/     # 配置名
-                ├── state.json
-                └── 20231210_143052/        # 时间戳
-                    ├── slide_01.png
-                    ├── slide_02.png
-                    ├── ...
-                    └── slides.pdf
+            │
+            ├── slides_doraemon_medium/       # 幻灯片配置
+            │   └── 20231210_143052/          # 时间戳
+            │       ├── slide_01.png
+            │       ├── slide_02.png
+            │       └── slides.pdf
+            │
+            ├── poster_academic_medium/       # 横向海报 (16:9)
+            │   └── 20231210_144022/
+            │       └── poster.png
+            │
+            └── poster_a0_academic_dense/     # A0 竖向海报 (841x1189mm)
+                └── 20231210_145533/
+                    └── poster.png
 ```
 
 ### 断点续传
@@ -206,17 +234,28 @@ python -m paper2slides \
   --length long            # 15-18页，详细讲解
 ```
 
-### 场景2：论文 → 快速海报
+### 场景2：论文 → 16:9 横向海报
 ```bash
 python -m paper2slides \
   --input paper.pdf \
   --output poster \
-  --density medium \       # sparse/medium/dense
+  --poster-format landscape \  # 默认，可省略
+  --density medium \           # sparse/medium/dense
   --style doraemon \
-  --fast                   # 快速生成
+  --fast                       # 快速生成
 ```
 
-### 场景3：技术文档 → 教学幻灯片
+### 场景3：论文 → A0 竖向学术海报
+```bash
+python -m paper2slides \
+  --input paper.pdf \
+  --output poster \
+  --poster-format portrait_a0 \  # A0 竖向 (841mm x 1189mm)
+  --density medium \
+  --style academic
+```
+
+### 场景4：技术文档 → 教学幻灯片
 ```bash
 python -m paper2slides \
   --input tutorial.md \
@@ -471,9 +510,10 @@ def extract_tables(markdown_content):
 **文件位置**: `paper2slides/core/stages/plan_stage.py`
 
 #### 核心职责
-- 决定幻灯片页数（根据 length/density 参数）
-- 分配内容到各页
-- 为每页匹配合适的图表
+- 决定幻灯片页数（根据 length 参数）或海报内容量（根据 density 参数）
+- 分配内容到各页/各区块
+- 为每页/区块匹配合适的图表
+- 支持两种海报格式：横向 16:9 和 A0 竖向
 
 #### 内容规划器
 
@@ -486,8 +526,30 @@ class ContentPlanner:
         self.style_type = style_type
 
     def plan(self, gen_input: GenerationInput) -> ContentPlan:
-        """生成内容布局方案"""
+        """生成内容布局方案（幻灯片或海报）"""
 
+        if gen_input.config.output_type == OutputType.POSTER:
+            return self._plan_poster(gen_input, ...)  # 海报规划
+        else:
+            return self._plan_slides(gen_input, ...)  # 幻灯片规划
+
+    def _plan_poster(self, gen_input, summary, tables_md, figure_images):
+        """海报内容规划（支持横向和 A0 竖向）"""
+        density = gen_input.config.poster_density.value
+        is_a0 = gen_input.config.poster_format == PosterFormat.PORTRAIT_A0
+
+        # 根据格式选择对应的提示词模板
+        if is_a0:
+            template = PAPER_POSTER_A0_PLANNING_PROMPT
+            layout_guidelines = PAPER_POSTER_A0_LAYOUT_GUIDELINES[density]
+        else:
+            template = PAPER_POSTER_PLANNING_PROMPT
+            layout_guidelines = None
+
+        # ... 调用 LLM 进行规划
+
+    def _plan_slides(self, gen_input, ...):
+        """幻灯片内容规划"""
         # 1. 确定页数范围
         page_config = self._get_page_config(gen_input)
         # short: 5-8页, medium: 10-13页, long: 15-18页
@@ -636,6 +698,13 @@ PAGE_CONFIGS = {
         "medium": {"pages": 1},
         "dense": {"pages": 1}
     }
+}
+
+# A0 竖向海报密度配置（字数指南）
+PAPER_POSTER_A0_LAYOUT_GUIDELINES = {
+    "sparse": "~400-500 words, minimal content, focus on key points",
+    "medium": "~700-900 words, balanced coverage",
+    "dense": "~1000-1300 words, comprehensive content",
 }
 ```
 
@@ -1515,6 +1584,7 @@ async def chat(
     style: str = Form("academic"),
     slides_length: str = Form("medium"),
     poster_density: str = Form("medium"),
+    poster_format: str = Form("landscape"),  # landscape 或 portrait_a0
     fast_mode: bool = Form(False),
     session_id: Optional[str] = Form(None)
 ):
@@ -1558,6 +1628,7 @@ async def chat(
         "style": style,
         "slides_length": slides_length,
         "poster_density": poster_density,
+        "poster_format": poster_format,  # 海报格式：landscape 或 portrait_a0
         "fast_mode": fast_mode
     }
 
@@ -1894,11 +1965,14 @@ def get_config_name(config):
 
     if output_type == "poster":
         param = config.get("poster_density", "medium")
+        # A0 竖向海报使用 poster_a0 前缀
+        poster_format = config.get("poster_format", "landscape")
+        if poster_format == "portrait_a0":
+            return f"poster_a0_{style}_{param}"  # poster_a0_academic_medium
+        return f"poster_{style}_{param}"  # poster_academic_medium
     else:
         param = config.get("slides_length", "medium")
-
-    # slides_doraemon_medium
-    return f"{output_type}_{style}_{param}"
+        return f"{output_type}_{style}_{param}"  # slides_doraemon_medium
 
 
 def get_config_dir(base_dir, config):
@@ -2092,141 +2166,231 @@ def detect_start_stage(base_dir, config_dir, config):
 
 ## 🚀 扩展和定制
 
-### 1. 添加新的输出类型
+### 1. 海报格式系统（已实现）
 
-**目标**：添加"学术海报"输出类型（A0 尺寸，竖向布局）
+系统已支持两种海报格式：**横向 16:9** 和 **A0 竖向学术海报**。
 
-#### 步骤 1：定义配置
+#### 配置定义
 
 ```python
 # generator/config.py
-POSTER_CONFIGS = {
-    "academic": {
-        "sparse": {"sections": 4},   # 标题、摘要、方法、结果
-        "medium": {"sections": 6},   # + 动机、结论
-        "dense": {"sections": 8}     # + 相关工作、未来工作
-    }
+
+class PosterFormat(str, Enum):
+    """海报格式选项"""
+    LANDSCAPE = "landscape"     # 16:9 横向（默认）
+    PORTRAIT_A0 = "portrait_a0" # A0 竖向 (841mm x 1189mm)
+
+# A0 海报尺寸常量
+POSTER_A0_DIMENSIONS = {
+    "width_mm": 841,
+    "height_mm": 1189,
+    "aspect_ratio": "9:13",  # 近似竖向比例
+    "dpi": 300,
 }
 
-POSTER_DIMENSIONS = {
-    "A0": {"width": 841, "height": 1189, "dpi": 300},  # mm
-    "A1": {"width": 594, "height": 841, "dpi": 300}
-}
+@dataclass
+class GenerationConfig:
+    output_type: OutputType = OutputType.POSTER
+    poster_density: PosterDensity = PosterDensity.MEDIUM
+    poster_format: PosterFormat = PosterFormat.LANDSCAPE  # 新增
+    slides_length: SlidesLength = SlidesLength.MEDIUM
+    style: StyleType = StyleType.ACADEMIC
+    custom_style: Optional[str] = None
+
+    def is_portrait_poster(self) -> bool:
+        """检查是否为 A0 竖向海报"""
+        return (self.output_type == OutputType.POSTER and
+                self.poster_format == PosterFormat.PORTRAIT_A0)
 ```
 
-#### 步骤 2：创建提示词模板
+#### A0 海报提示词模板
 
 ```python
-# prompts/poster_generation.py
-ACADEMIC_POSTER_PROMPT = """
-创建一张学术会议海报（A0 尺寸，竖向布局）。
+# prompts/image_generation.py
 
-## 布局结构
+FORMAT_POSTER_A0 = """PORTRAIT A0 academic conference poster (aspect ratio approximately 2:3 vertical, like 841mm width x 1189mm height).
+Generate ONE complete vertical poster image. The poster should be TALLER than it is wide.
+This is a professional academic conference poster with structured layout."""
+
+POSTER_A0_STYLE_HINTS = {
+    "academic": """Professional academic conference poster style for A0 PORTRAIT format.
+
+LAYOUT STRUCTURE (Top to Bottom):
 ┌─────────────────────────────────┐
-│         标题栏（20%）            │
-│  论文标题 + 作者 + 机构          │
-├─────────────┬───────────────────┤
-│             │                   │
-│   左栏      │      右栏         │
-│  (40%)      │     (40%)         │
-│             │                   │
-│  - 摘要     │   - 实验结果      │
-│  - 动机     │   - 可视化        │
-│  - 方法     │   - 结论          │
-│             │                   │
-└─────────────┴───────────────────┘
+│      TITLE BAR (colored)        │  ← Title, authors, affiliations, logos
+├─────────────────────────────────┤
+│  ┌─────────┐ ┌─────────┐       │
+│  │  LEFT   │ │ CENTER  │       │  ← 2-3 column layout for content
+│  │ COLUMN  │ │ COLUMN  │       │
+│  └─────────┘ └─────────┘       │
+│  ┌─────────────────────┐       │
+│  │   RESULTS SECTION   │       │  ← Wide section for tables/figures
+│  └─────────────────────┘       │
+│  ┌─────────────────────┐       │
+│  │    CONCLUSIONS      │       │  ← Bottom section
+│  └─────────────────────┘       │
+└─────────────────────────────────┘
 
-## 内容分配
-{sections_content}
+STYLE REQUIREMENTS:
+- Background: Clean white or very light gray
+- Title bar: Navy blue with white text
+- Typography: Professional sans-serif
+- Colors: LIMITED PALETTE (3-4 colors max)
+- English text only""",
 
-## 风格要求
-- 背景：白色或浅灰色
-- 字体：标题 72pt, 正文 36pt
-- 颜色：{color_scheme}
-- 图片：高分辨率，清晰可读
-- 表格：简洁，突出关键数据
+    "doraemon": """Doraemon-themed academic poster style for A0 PORTRAIT format.
+Story-based layout with problem → solution → results flow.
+SOPHISTICATED Doraemon palette - NOT childish colors.""",
+}
 
-输出：完整的海报图像（841mm x 1189mm, 300dpi）
+# 按密度的布局模板
+POSTER_A0_LAYOUTS = {
+    "sparse": "Title + 2 columns + 1-2 figures + 3-4 bullet conclusion",
+    "medium": "Title + 3 columns + full results section + 5-6 contributions",
+    "dense": "Complete header + 3 detailed columns + multiple tables + full analysis",
+}
+```
+
+#### 内容规划提示词
+
+```python
+# prompts/content_planning.py
+
+PAPER_POSTER_A0_PLANNING_PROMPT = """Organize the document into sections for a PORTRAIT A0 academic poster (841mm x 1189mm, vertical layout).
+
+## Required Sections for A0 Poster (in order):
+1. **header**: Paper title, ALL authors with affiliations
+2. **introduction**: Background, problem statement, motivation
+3. **method**: Proposed approach with key components and formulas
+4. **results**: Experimental evaluation with tables and figures
+5. **conclusion**: Main contributions and takeaways
+
+## Output Format (JSON)
+{
+  "sections": [
+    {"id": "header", "title": "[Paper Title]", "content": "[Authors]", ...},
+    {"id": "introduction", "title": "Introduction & Motivation", ...},
+    {"id": "method", "title": "[Method Name]", ...},
+    {"id": "results", "title": "Experiments & Results", ...},
+    {"id": "conclusion", "title": "Conclusions", ...}
+  ]
+}
 """
+
+# 密度对应的布局指南
+PAPER_POSTER_A0_LAYOUT_GUIDELINES = {
+    "sparse": "~400-500 words, minimal content",
+    "medium": "~700-900 words, balanced content",
+    "dense": "~1000-1300 words, comprehensive content",
+}
 ```
 
-#### 步骤 3：实现生成器
+#### ContentPlanner 更新
 
 ```python
-# generator/poster_generator.py
-class PosterGenerator:
-    def __init__(self, llm_client, style="academic"):
-        self.llm_client = llm_client
-        self.style = style
+# generator/content_planner.py
 
-    def generate(self, content, config):
-        """生成单张海报"""
+def _plan_poster(self, gen_input, summary, tables_md, figure_images):
+    """Plan poster sections (landscape or portrait A0)."""
+    density = gen_input.config.poster_density.value
+    is_a0 = gen_input.config.poster_format == PosterFormat.PORTRAIT_A0
 
-        # 1. 构建布局
-        layout = self._create_layout(content, config)
+    if gen_input.is_paper():
+        density_guidelines = PAPER_POSTER_DENSITY_GUIDELINES[density]
+        if is_a0:
+            template = PAPER_POSTER_A0_PLANNING_PROMPT
+            layout_guidelines = PAPER_POSTER_A0_LAYOUT_GUIDELINES[density]
+        else:
+            template = PAPER_POSTER_PLANNING_PROMPT
+            layout_guidelines = None
+    # ... 类似处理 general content
 
-        # 2. 构建提示词
-        prompt = ACADEMIC_POSTER_PROMPT.format(
-            sections_content=layout,
-            color_scheme=self._get_color_scheme()
-        )
+    prompt = template.format(
+        density_guidelines=density_guidelines,
+        layout_guidelines=layout_guidelines,
+        summary=summary,
+        assets_section=assets_section,
+    )
 
-        # 3. 准备图片
-        images = self._prepare_images(content.origin.figures)
-
-        # 4. 生成
-        poster_image = self._call_model(
-            prompt=prompt,
-            images=images,
-            dimensions=POSTER_DIMENSIONS["A0"]
-        )
-
-        return poster_image
-
-    def _create_layout(self, content, config):
-        """根据密度创建布局"""
-        density = config.get("poster_density", "medium")
-
-        if density == "sparse":
-            sections = [
-                ("标题", content.paper_info),
-                ("摘要", content.motivation[:500]),
-                ("方法", content.solution[:800]),
-                ("结果", content.results[:800])
-            ]
-        elif density == "medium":
-            sections = [
-                ("标题", content.paper_info),
-                ("动机", content.motivation[:400]),
-                ("方法", content.solution[:600]),
-                ("结果", content.results[:600]),
-                ("结论", content.contributions[:400])
-            ]
-        elif density == "dense":
-            # 完整内容...
-            pass
-
-        return self._format_sections(sections)
+    result = self._call_multimodal_llm(prompt, figure_images)
+    return self._parse_sections(result, is_slides=False)
 ```
 
-#### 步骤 4：集成到流水线
+#### ImageGenerator 更新
 
 ```python
-# core/stages/generate_stage.py
-async def run_generate_stage(base_dir, config_dir, config):
-    # 加载前置数据
-    plan_checkpoint = load_json(config_dir / "checkpoint_plan.json")
-    summary_checkpoint = load_json(base_dir / mode / "checkpoint_summary.json")
+# generator/image_generator.py
 
-    # 选择生成器
-    if config["output_type"] == "slides":
-        generator = ImageGenerator(...)
-        images = generator.generate_slides(plan, gen_input)
-    elif config["output_type"] == "poster":
-        generator = PosterGenerator(...)
-        images = [generator.generate(content, config)]  # 单张海报
+def _generate_poster(self, style_name, processed_style, sections_md, images,
+                     poster_format=PosterFormat.LANDSCAPE, density="medium"):
+    """Generate 1 poster image (landscape 16:9 or portrait A0)."""
+    is_a0 = poster_format == PosterFormat.PORTRAIT_A0
 
-    # 保存...
+    if is_a0:
+        prompt = self._build_poster_a0_prompt(
+            style_name=style_name,
+            processed_style=processed_style,
+            sections_md=sections_md,
+            density=density,
+        )
+    else:
+        prompt = self._build_poster_prompt(
+            format_prefix=FORMAT_POSTER,
+            style_name=style_name,
+            processed_style=processed_style,
+            sections_md=sections_md,
+        )
+
+    image_data, mime_type = self._call_model(prompt, images)
+    return [GeneratedImage(section_id="poster", image_data=image_data, mime_type=mime_type)]
+
+def _build_poster_a0_prompt(self, style_name, processed_style, sections_md, density):
+    """Build prompt for A0 portrait poster."""
+    parts = [FORMAT_POSTER_A0]
+
+    # 使用 A0 专用样式提示
+    style_hints = POSTER_A0_STYLE_HINTS.get(style_name, POSTER_A0_STYLE_HINTS["academic"])
+    parts.append(style_hints)
+
+    # 添加密度对应的布局指南
+    layout_guide = POSTER_A0_LAYOUTS.get(density, POSTER_A0_LAYOUTS["medium"])
+    parts.append(layout_guide)
+
+    parts.append(VISUALIZATION_HINTS)
+    parts.append(POSTER_FIGURE_HINT)
+    parts.append(f"---\nContent:\n{sections_md}")
+
+    return "\n\n".join(parts)
+```
+
+#### 使用示例
+
+```bash
+# 生成 A0 竖向学术海报
+python -m paper2slides --input paper.pdf --output poster --poster-format portrait_a0 --style academic --density medium
+
+# 生成 A0 竖向 Doraemon 风格海报
+python -m paper2slides --input paper.pdf --output poster --poster-format portrait_a0 --style doraemon --density dense
+
+# 生成默认横向海报（向后兼容）
+python -m paper2slides --input paper.pdf --output poster --style academic
+```
+
+#### 输出目录结构
+
+系统根据海报格式生成不同的目录名：
+
+```
+outputs/
+├── paper_name/
+│   └── paper/
+│       └── normal/
+│           ├── poster_academic_medium/          # 横向海报
+│           │   └── 20241210_143022/
+│           │       └── poster.png
+│           └── poster_a0_academic_medium/       # A0 竖向海报
+│               └── 20241210_144533/
+│                   └── poster.png
 ```
 
 ---

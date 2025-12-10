@@ -100,13 +100,13 @@ Keep: main research problem, method name and core idea, best performance numbers
 Present tables using extract (partial table) showing only the most important rows with ACTUAL values.
 Write clear sentences that capture the essential point of each section.
 Still include key mathematical formulas if they are central to the method.""",
-    
+
     "medium": """Current density level is **medium**. Content should cover main points with supporting details.
 Keep: research problem with context, method components and how they work, main results with comparisons, contributions.
 **INCLUDE mathematical formulas** that define the method with notation explanations.
 Include relevant tables with key columns/rows and ACTUAL data values.
 Write complete explanations that give readers a solid understanding.""",
-    
+
     "dense": """Current density level is **dense**. Content should be comprehensive with full technical details.
 Keep: complete problem context and limitations, all method components with technical descriptions, full experimental results including ablations, all contributions and findings.
 **INCLUDE key mathematical formulas** with notation explanations.
@@ -115,7 +115,7 @@ Write thorough explanations covering methodology, implementation details, and an
 Copy specific numbers, percentages, and metrics directly from the source.""",
 }
 
-# Paper poster planning prompt
+# Paper poster planning prompt (landscape 16:9)
 PAPER_POSTER_PLANNING_PROMPT = """Organize the document into poster sections by distributing the content below.
 
 ## Document Summary
@@ -156,7 +156,7 @@ PAPER_POSTER_PLANNING_PROMPT = """Organize the document into poster sections by 
    - Technical details: algorithms, parameters, implementation specifics
    - Pair with figures
 
-4. **Results**: 
+4. **Results**:
    - Dataset details with EXACT numbers (size, splits, categories)
    - Main metrics and what they measure
    - Performance numbers with EXACT values from tables
@@ -199,6 +199,144 @@ PAPER_POSTER_PLANNING_PROMPT = """Organize the document into poster sections by 
 3. **SPECIFIC NUMBERS**: Use precise values from source.
 4. **TABLE DATA**: Extract tables with actual numerical values from the original.
 """
+
+# A0 Portrait Poster Planning Prompt (for academic papers)
+PAPER_POSTER_A0_PLANNING_PROMPT = """Organize the document into sections for a PORTRAIT A0 academic poster (841mm x 1189mm, vertical layout).
+
+## Document Summary
+{summary}
+{assets_section}
+## Content Density and Layout
+{density_guidelines}
+
+{layout_guidelines}
+
+## Output Fields
+- **id**: Section identifier (e.g., "header", "introduction", "method", "results", "conclusion")
+- **title**: Section title for the poster
+- **content**: The main text for this section. Requirements:
+  - **DETAILED DESCRIPTIONS**: Explain each concept/step thoroughly
+  - **PRESERVE KEY FORMULAS**: Include 1-2 key formulas in LaTeX with notation explanations
+  - **PRESERVE SPECIFIC NUMBERS**: All key metrics, dataset sizes, performance values
+  - **SUBSTANTIAL CONTENT**: Enough detail to stand alone on a poster section
+  - **COPY FROM SOURCE**: Extract and adapt text, do not over-simplify
+  - Adjust detail level based on density. Only use information provided.
+- **tables**: Tables to show in this section
+  - table_id: Reference ID
+  - extract: Partial table HTML with ACTUAL values
+  - focus: What to emphasize
+- **figures**: Figures to show in this section
+  - figure_id: Reference ID
+  - focus: What to highlight
+
+## Required Sections for A0 Poster
+
+Create sections in this order (top to bottom of poster):
+
+1. **header**: Paper title, ALL authors with affiliations, institution logos if mentioned
+   - This becomes the title bar at the top of the poster
+
+2. **introduction**: Background, problem statement, motivation
+   - Why this research matters
+   - What problem are we solving
+   - Limitations of existing approaches
+
+3. **method**: Proposed approach/framework
+   - Overview of the method
+   - Key components and their roles
+   - Algorithm steps or process flow
+   - Include 1-2 key formulas
+   - Pair with architecture/pipeline figures
+
+4. **results**: Experimental evaluation
+   - Datasets with EXACT numbers
+   - Metrics used
+   - Main results with EXACT values
+   - Key comparisons (include table extracts)
+   - Ablation highlights if present
+
+5. **conclusion**: Main contributions and takeaways
+   - List each contribution explicitly
+   - Key findings with numbers
+   - Future directions if mentioned
+
+## Output Format (JSON)
+```json
+{{
+  "sections": [
+    {{
+      "id": "header",
+      "title": "[Paper Title]",
+      "content": "[All authors with affiliations, e.g., John Doe (MIT), Jane Smith (Stanford)]",
+      "tables": [],
+      "figures": []
+    }},
+    {{
+      "id": "introduction",
+      "title": "Introduction & Motivation",
+      "content": "[Research problem with context. Current approaches have these limitations: 1) ... 2) ... This motivates our work to...]",
+      "tables": [],
+      "figures": []
+    }},
+    {{
+      "id": "method",
+      "title": "[Method Name]",
+      "content": "[Our framework consists of X main components: 1) Component A handles... 2) Component B processes... The key formula is \\\\( formula \\\\) where variables represent...]",
+      "tables": [],
+      "figures": [{{"figure_id": "Figure X", "focus": "architecture overview"}}]
+    }},
+    {{
+      "id": "results",
+      "title": "Experiments & Results",
+      "content": "[Evaluated on Dataset (N samples, K categories). Main metrics: Metric1, Metric2. Our method achieves XX.X% on Metric1, outperforming baseline by Y.Y%...]",
+      "tables": [{{"table_id": "Table X", "extract": "<table>...</table>", "focus": "main comparison"}}],
+      "figures": [{{"figure_id": "Figure Y", "focus": "qualitative results"}}]
+    }},
+    {{
+      "id": "conclusion",
+      "title": "Conclusions",
+      "content": "[Main contributions: 1) We propose... 2) We demonstrate... Key findings include...]",
+      "tables": [],
+      "figures": []
+    }}
+  ]
+}}
+```
+
+## CRITICAL REQUIREMENTS
+1. **EXACTLY 5 SECTIONS**: header, introduction, method, results, conclusion (in this order)
+2. **MATHEMATICAL FORMULAS**: Include key formulas in Method section using LaTeX
+3. **MINIMUM CONTENT**: header ~50 words, other sections 100-200 words each
+4. **SPECIFIC NUMBERS**: Use exact values from source
+5. **TABLE DATA**: Extract tables with actual numerical values
+"""
+
+# A0 Poster layout guidelines by density (used with PAPER_POSTER_A0_PLANNING_PROMPT)
+PAPER_POSTER_A0_LAYOUT_GUIDELINES: Dict[str, str] = {
+    "sparse": """LAYOUT FOR SPARSE DENSITY:
+- Header: Title, authors, affiliations only (no abstract)
+- Introduction: 2-3 sentences on problem and motivation
+- Method: Core idea in 3-4 sentences, 1 key figure
+- Results: Best performance numbers, 1 main table extract
+- Conclusion: 3 bullet points
+Total target: ~400-500 words of content""",
+
+    "medium": """LAYOUT FOR MEDIUM DENSITY:
+- Header: Title, authors, affiliations, brief abstract (1-2 sentences)
+- Introduction: Full problem context, 3-4 limitations of prior work
+- Method: All components explained, key formula, 1-2 figures
+- Results: Dataset details, main results table, key comparisons
+- Conclusion: 4-5 contributions/findings
+Total target: ~700-900 words of content""",
+
+    "dense": """LAYOUT FOR DENSE DENSITY:
+- Header: Complete title, all authors with affiliations, full abstract
+- Introduction: Comprehensive background, all limitations, motivation
+- Method: Full technical description, multiple figures, algorithm details, formulas with explanations
+- Results: Complete experimental setup, all datasets, full results with ablations, multiple tables
+- Conclusion: All contributions, detailed findings, future work
+Total target: ~1000-1300 words of content""",
+}
 
 # General document prompts (no fixed academic structure)
 GENERAL_SLIDES_PLANNING_PROMPT = """Organize the document into {min_pages}-{max_pages} slides by distributing the content below.
@@ -379,3 +517,136 @@ Organize content into logical sections based on the document's natural structure
 3. **SPECIFIC NUMBERS**: Use precise values from source.
 4. **TABLE DATA**: Extract tables with actual numerical values from the original.
 """
+
+# A0 Portrait Poster Planning Prompt (for general documents)
+GENERAL_POSTER_A0_PLANNING_PROMPT = """Organize the document into sections for a PORTRAIT A0 poster (841mm x 1189mm, vertical layout).
+
+## Document Content
+{summary}
+{assets_section}
+## Content Density and Layout
+{density_guidelines}
+
+{layout_guidelines}
+
+## Output Fields
+- **id**: Section identifier (e.g., "header", "overview", "details", "data", "summary")
+- **title**: Section title for the poster
+- **content**: The main text for this section. Requirements:
+  - **DETAILED DESCRIPTIONS**: Explain each concept/point thoroughly
+  - **PRESERVE KEY FORMULAS**: Include relevant formulas if present
+  - **PRESERVE SPECIFIC NUMBERS**: All key statistics, values, percentages
+  - **SUBSTANTIAL CONTENT**: Enough detail to stand alone on a poster section
+  - **COPY FROM SOURCE**: Extract and adapt text, do not over-simplify
+  - Adjust detail level based on density. Only use information provided.
+- **tables**: Tables to show in this section
+  - table_id: Reference ID
+  - extract: Partial table HTML with ACTUAL values
+  - focus: What to emphasize
+- **figures**: Figures to show in this section
+  - figure_id: Reference ID
+  - focus: What to highlight
+
+## Required Sections for A0 Poster
+
+Create sections in this order (top to bottom of poster):
+
+1. **header**: Document title, source/authors if available
+   - This becomes the title bar at the top of the poster
+
+2. **overview**: Introduction and context
+   - What is this document about
+   - Key background information
+   - Main purpose or thesis
+
+3. **details**: Main content
+   - Core concepts explained
+   - Key points with supporting details
+   - Include relevant figures
+
+4. **data**: Key statistics and numbers
+   - Important data points
+   - Comparisons and analysis
+   - Include table extracts if available
+
+5. **summary**: Main takeaways
+   - Key conclusions
+   - Important findings listed
+
+## Output Format (JSON)
+```json
+{{
+  "sections": [
+    {{
+      "id": "header",
+      "title": "[Document Title]",
+      "content": "[Source/authors if available]",
+      "tables": [],
+      "figures": []
+    }},
+    {{
+      "id": "overview",
+      "title": "Overview",
+      "content": "[Introduction and context. This document covers... The main focus is...]",
+      "tables": [],
+      "figures": []
+    }},
+    {{
+      "id": "details",
+      "title": "[Main Topic]",
+      "content": "[Detailed explanation of main content. Key concepts include... The process involves...]",
+      "tables": [],
+      "figures": [{{"figure_id": "Figure X", "focus": "key illustration"}}]
+    }},
+    {{
+      "id": "data",
+      "title": "Key Data",
+      "content": "[Important statistics and numbers. The data shows... Comparisons indicate...]",
+      "tables": [{{"table_id": "Table X", "extract": "<table>...</table>", "focus": "main data"}}],
+      "figures": []
+    }},
+    {{
+      "id": "summary",
+      "title": "Key Takeaways",
+      "content": "[Main conclusions: 1) ... 2) ... Important findings include...]",
+      "tables": [],
+      "figures": []
+    }}
+  ]
+}}
+```
+
+## CRITICAL REQUIREMENTS
+1. **EXACTLY 5 SECTIONS**: header, overview, details, data, summary (in this order)
+2. **FORMULAS**: Include formulas if present in the source
+3. **MINIMUM CONTENT**: header ~30 words, other sections 80-150 words each
+4. **SPECIFIC NUMBERS**: Use exact values from source
+5. **TABLE DATA**: Extract tables with actual numerical values
+"""
+
+# A0 Poster layout guidelines for general documents
+GENERAL_POSTER_A0_LAYOUT_GUIDELINES: Dict[str, str] = {
+    "sparse": """LAYOUT FOR SPARSE DENSITY:
+- Header: Title, source only
+- Overview: 2-3 sentences on main topic
+- Details: Core concepts in 3-4 sentences, 1 key figure if available
+- Data: Most important statistics or numbers
+- Summary: 3 bullet points
+Total target: ~350-450 words of content""",
+
+    "medium": """LAYOUT FOR MEDIUM DENSITY:
+- Header: Title, source, brief description
+- Overview: Full context, background information
+- Details: All key concepts explained, 1-2 figures
+- Data: Main statistics with context and comparisons
+- Summary: 4-5 key takeaways
+Total target: ~600-800 words of content""",
+
+    "dense": """LAYOUT FOR DENSE DENSITY:
+- Header: Complete title, all source information
+- Overview: Comprehensive introduction, full background
+- Details: Thorough explanation of all concepts, multiple figures
+- Data: All important statistics, detailed comparisons, multiple tables
+- Summary: All conclusions, detailed findings
+Total target: ~900-1100 words of content""",
+}

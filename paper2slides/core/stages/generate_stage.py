@@ -15,7 +15,7 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
     """Stage 4: Generate images."""
     from paper2slides.summary import PaperContent, GeneralContent, TableInfo, FigureInfo, OriginalElements
     from paper2slides.generator import GenerationConfig, GenerationInput
-    from paper2slides.generator.config import OutputType, PosterDensity, SlidesLength, StyleType
+    from paper2slides.generator.config import OutputType, PosterDensity, PosterFormat, SlidesLength, StyleType
     from paper2slides.generator.content_planner import ContentPlan, Section, TableRef, FigureRef
     from paper2slides.generator.image_generator import ImageGenerator, save_images_as_pdf
     
@@ -72,6 +72,7 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
     gen_config = GenerationConfig(
         output_type=OutputType(config.get("output_type", "slides")),
         poster_density=PosterDensity(config.get("poster_density", "medium")),
+        poster_format=PosterFormat(config.get("poster_format", "landscape")),
         slides_length=SlidesLength(config.get("slides_length", "medium")),
         style=StyleType(config.get("style", "academic")),
         custom_style=config.get("custom_style"),

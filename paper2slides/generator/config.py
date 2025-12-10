@@ -14,11 +14,17 @@ class OutputType(str, Enum):
     SLIDES = "slides"
 
 
+class PosterFormat(str, Enum):
+    """Poster format/layout options."""
+    LANDSCAPE = "landscape"     # 16:9 horizontal (default, like slides)
+    PORTRAIT_A0 = "portrait_a0" # A0 vertical (841mm x 1189mm)
+
+
 class PosterDensity(str, Enum):
     """Content density level for poster."""
-    SPARSE = "sparse"   
-    MEDIUM = "medium"   
-    DENSE = "dense"     
+    SPARSE = "sparse"
+    MEDIUM = "medium"
+    DENSE = "dense"
 
 
 class SlidesLength(str, Enum):
@@ -43,38 +49,55 @@ SLIDES_PAGE_RANGES: Dict[str, tuple[int, int]] = {
 }
 
 
+# A0 poster dimensions (for reference)
+POSTER_A0_DIMENSIONS = {
+    "width_mm": 841,
+    "height_mm": 1189,
+    "aspect_ratio": "9:13",  # Approximately vertical
+    "dpi": 300,
+}
+
+
 @dataclass
 class GenerationConfig:
     """
     User configuration for generation.
-    
+
     Attributes:
         output_type: Type of output (poster or slides)
         poster_density: Content density for poster (sparse/medium/dense)
+        poster_format: Poster format (landscape 16:9 or portrait_a0)
         slides_length: Page count level for slides (short/medium/long)
         style: Style type (academic/doraemon/custom)
         custom_style: User's custom style description (used when style=custom)
     """
     output_type: OutputType = OutputType.POSTER
-    
+
     # Poster specific
     poster_density: PosterDensity = PosterDensity.MEDIUM
-    
+    poster_format: PosterFormat = PosterFormat.LANDSCAPE
+
     # Slides specific
     slides_length: SlidesLength = SlidesLength.MEDIUM
-    
+
     # Style
     style: StyleType = StyleType.ACADEMIC
     custom_style: Optional[str] = None
-    
+
     def get_page_range(self) -> tuple[int, int]:
         """Get page count range for slides."""
         return SLIDES_PAGE_RANGES.get(self.slides_length.value, (8, 12))
-    
+
+    def is_portrait_poster(self) -> bool:
+        """Check if poster is portrait A0 format."""
+        return (self.output_type == OutputType.POSTER and
+                self.poster_format == PosterFormat.PORTRAIT_A0)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "output_type": self.output_type.value,
             "poster_density": self.poster_density.value,
+            "poster_format": self.poster_format.value,
             "slides_length": self.slides_length.value,
             "style": self.style.value,
             "custom_style": self.custom_style,

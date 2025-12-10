@@ -19,23 +19,27 @@ def get_mode_dir(base_dir: Path, config: Dict) -> Path:
 
 
 def get_config_name(config: Dict) -> str:
-    """Generate config directory name: {output}_{style}_{param}."""
+    """Generate config directory name: {output}_{format}_{style}_{param} for posters, {output}_{style}_{param} for slides."""
     output_type = config.get("output_type", "slides")
     style = config.get("style", "academic")
-    
+
     if output_type == "poster":
         param = config.get("poster_density", "medium")
+        poster_format = config.get("poster_format", "landscape")
+        # Include poster format in directory name
+        format_suffix = "_a0" if poster_format == "portrait_a0" else ""
     else:
         param = config.get("slides_length", "medium")
-    
+        format_suffix = ""
+
     # Handle custom style. Use hash suffix
     if style == "custom":
         custom = config.get("custom_style", "")
         # Use first 16 chars of custom style
         suffix = custom[:16].replace(" ", "_").replace("/", "_") if custom else "custom"
         style = f"custom_{suffix}"
-    
-    return f"{output_type}_{style}_{param}"
+
+    return f"{output_type}{format_suffix}_{style}_{param}"
 
 
 def get_config_dir(base_dir: Path, config: Dict) -> Path:
