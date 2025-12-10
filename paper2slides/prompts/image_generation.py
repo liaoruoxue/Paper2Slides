@@ -260,3 +260,25 @@ CONSISTENCY_HINT = "IMPORTANT: Maintain consistent colors and style with the ref
 SLIDE_FIGURE_HINT = "For reference figures: REDRAW them to match the visual style and color scheme. Preserve the original structure and key information, but make them BLEND seamlessly with the slide design."
 
 POSTER_FIGURE_HINT = "For reference figures: REDRAW them to match the visual style and color scheme. Preserve the original structure and key information, but make them BLEND seamlessly with the poster design."
+
+
+# Language hint for image generation
+def get_language_hint(language: str) -> str:
+    """Get language hint for image generation prompts."""
+    if language.lower() == "en":
+        return "TEXT LANGUAGE: English text only."
+
+    lang_hints = {
+        "zh": "TEXT LANGUAGE: Use Simplified Chinese (简体中文) for ALL text. Technical terms can include English in parentheses.",
+        "zh-tw": "TEXT LANGUAGE: Use Traditional Chinese (繁體中文) for ALL text. Technical terms can include English in parentheses.",
+        "ja": "TEXT LANGUAGE: Use Japanese (日本語) for ALL text. Technical terms can use katakana or include English.",
+        "ko": "TEXT LANGUAGE: Use Korean (한국어) for ALL text. Technical terms can include English in parentheses.",
+        "es": "TEXT LANGUAGE: Use Spanish (Español) for ALL text.",
+        "fr": "TEXT LANGUAGE: Use French (Français) for ALL text.",
+        "de": "TEXT LANGUAGE: Use German (Deutsch) for ALL text.",
+        "ru": "TEXT LANGUAGE: Use Russian (Русский) for ALL text.",
+        "pt": "TEXT LANGUAGE: Use Portuguese (Português) for ALL text.",
+        "it": "TEXT LANGUAGE: Use Italian (Italiano) for ALL text.",
+        "ar": "TEXT LANGUAGE: Use Arabic (العربية) for ALL text. Right-to-left layout where appropriate.",
+    }
+    return lang_hints.get(language.lower(), f"TEXT LANGUAGE: Use {language} for ALL text.")

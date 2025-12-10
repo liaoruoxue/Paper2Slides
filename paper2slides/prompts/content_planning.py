@@ -3,6 +3,49 @@ LLM prompts for content planning (slides and posters)
 """
 from typing import Dict
 
+# Language instruction template - injected at the start of prompts
+LANGUAGE_INSTRUCTION = """## Output Language
+ALL text content in your response must be written in **{language_name}**.
+This includes: titles, section content, descriptions, and any other text.
+{special_instruction}
+"""
+
+# Special instructions for specific languages
+LANGUAGE_SPECIAL_INSTRUCTIONS: Dict[str, str] = {
+    "zh": "Use Simplified Chinese characters. Technical terms can keep English in parentheses if needed, e.g., '卷积神经网络 (CNN)'.",
+    "zh-tw": "Use Traditional Chinese characters. Technical terms can keep English in parentheses if needed.",
+    "ja": "Use Japanese (日本語). Technical terms can keep English in katakana or parentheses if needed.",
+    "ko": "Use Korean (한국어). Technical terms can keep English in parentheses if needed.",
+    "en": "",  # No special instruction for English
+}
+
+def get_language_instruction(language: str) -> str:
+    """Get language instruction for prompts."""
+    if language.lower() == "en":
+        return ""  # No instruction needed for English (default)
+
+    lang_names = {
+        "en": "English",
+        "zh": "Chinese (Simplified Chinese / 简体中文)",
+        "zh-tw": "Chinese (Traditional Chinese / 繁體中文)",
+        "ja": "Japanese (日本語)",
+        "ko": "Korean (한국어)",
+        "es": "Spanish (Español)",
+        "fr": "French (Français)",
+        "de": "German (Deutsch)",
+        "ru": "Russian (Русский)",
+        "pt": "Portuguese (Português)",
+        "it": "Italian (Italiano)",
+        "ar": "Arabic (العربية)",
+    }
+    language_name = lang_names.get(language.lower(), language)
+    special_instruction = LANGUAGE_SPECIAL_INSTRUCTIONS.get(language.lower(), "")
+
+    return LANGUAGE_INSTRUCTION.format(
+        language_name=language_name,
+        special_instruction=special_instruction
+    )
+
 # Paper slides planning prompt
 PAPER_SLIDES_PLANNING_PROMPT = """Organize the document into {min_pages}-{max_pages} slides by distributing the content below.
 

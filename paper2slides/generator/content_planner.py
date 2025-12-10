@@ -178,23 +178,26 @@ class ContentPlanner:
     ) -> List[Section]:
         """Plan slides sections."""
         min_pages, max_pages = gen_input.config.get_page_range()
-        
+
         # Select prompt template based on content type
         template = PAPER_SLIDES_PLANNING_PROMPT if gen_input.is_paper() else GENERAL_SLIDES_PLANNING_PROMPT
-        
+
         # Build assets section based on available tables/figures
         assets_section = self._build_assets_section(tables_md, bool(figure_images))
-        
+
         prompt = template.format(
             min_pages=min_pages,
             max_pages=max_pages,
             summary=self._truncate(summary, 10000),
             assets_section=assets_section,
         )
-        
+
+        # Note: Language is NOT applied here - content planning stays in English
+        # for better quality. Language is applied at image generation stage.
+
         result = self._call_multimodal_llm(prompt, figure_images)
         return self._parse_sections(result, is_slides=True)
-    
+
     def _plan_poster(
         self,
         gen_input: GenerationInput,
@@ -241,6 +244,9 @@ class ContentPlanner:
                 summary=self._truncate(summary, 10000),
                 assets_section=assets_section,
             )
+
+        # Note: Language is NOT applied here - content planning stays in English
+        # for better quality. Language is applied at image generation stage.
 
         result = self._call_multimodal_llm(prompt, figure_images)
         return self._parse_sections(result, is_slides=False)

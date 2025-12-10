@@ -70,6 +70,7 @@ class GenerationConfig:
         slides_length: Page count level for slides (short/medium/long)
         style: Style type (academic/doraemon/custom)
         custom_style: User's custom style description (used when style=custom)
+        language: Output language code (en, zh, ja, ko, etc.)
     """
     output_type: OutputType = OutputType.POSTER
 
@@ -84,6 +85,9 @@ class GenerationConfig:
     style: StyleType = StyleType.ACADEMIC
     custom_style: Optional[str] = None
 
+    # Language
+    language: str = "en"  # Output language: en, zh, ja, ko, etc.
+
     def get_page_range(self) -> tuple[int, int]:
         """Get page count range for slides."""
         return SLIDES_PAGE_RANGES.get(self.slides_length.value, (8, 12))
@@ -93,6 +97,24 @@ class GenerationConfig:
         return (self.output_type == OutputType.POSTER and
                 self.poster_format == PosterFormat.PORTRAIT_A0)
 
+    def get_language_name(self) -> str:
+        """Get full language name from code."""
+        lang_names = {
+            "en": "English",
+            "zh": "Chinese (Simplified)",
+            "zh-tw": "Chinese (Traditional)",
+            "ja": "Japanese",
+            "ko": "Korean",
+            "es": "Spanish",
+            "fr": "French",
+            "de": "German",
+            "ru": "Russian",
+            "pt": "Portuguese",
+            "it": "Italian",
+            "ar": "Arabic",
+        }
+        return lang_names.get(self.language.lower(), self.language)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "output_type": self.output_type.value,
@@ -101,6 +123,7 @@ class GenerationConfig:
             "slides_length": self.slides_length.value,
             "style": self.style.value,
             "custom_style": self.custom_style,
+            "language": self.language,
         }
 
 

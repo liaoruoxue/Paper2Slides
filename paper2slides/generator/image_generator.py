@@ -39,6 +39,7 @@ from ..prompts.image_generation import (
     CONSISTENCY_HINT,
     SLIDE_FIGURE_HINT,
     POSTER_FIGURE_HINT,
+    get_language_hint,
 )
 
 
@@ -140,6 +141,7 @@ class ImageGenerator:
         style_name = gen_input.config.style.value
         custom_style = gen_input.config.custom_style
         poster_format = gen_input.config.poster_format
+        language = gen_input.config.language
 
         # Process custom style with LLM if needed
         processed_style = None
@@ -155,13 +157,14 @@ class ImageGenerator:
             result = self._generate_poster(
                 style_name, processed_style, all_sections_md, all_images,
                 poster_format=poster_format,
-                density=gen_input.config.poster_density.value
+                density=gen_input.config.poster_density.value,
+                language=language
             )
             if save_callback and result:
                 save_callback(result[0], 0, 1)
             return result
         else:
-            return self._generate_slides(plan, style_name, processed_style, all_sections_md, figure_images, max_workers, save_callback)
+            return self._generate_slides(plan, style_name, processed_style, all_sections_md, figure_images, max_workers, save_callback, language=language)
     
     def _generate_poster(
         self,
@@ -170,7 +173,8 @@ class ImageGenerator:
         sections_md,
         images,
         poster_format: PosterFormat = PosterFormat.LANDSCAPE,
-        density: str = "medium"
+        density: str = "medium",
+        language: str = "en"
     ) -> List[GeneratedImage]:
         """Generate 1 poster image (landscape 16:9 or portrait A0)."""
         logger = logging.getLogger(__name__)
@@ -182,29 +186,31 @@ class ImageGenerator:
                 processed_style=processed_style,
                 sections_md=sections_md,
                 density=density,
+                language=language,
             )
             # A0 portrait: use 9:16 aspect ratio (closest to 841:1189 ≈ 1:1.41)
             aspect_ratio = "9:16"
-            logger.info(f"Generating A0 portrait poster (aspect_ratio={aspect_ratio}, density={density})")
+            logger.info(f"Generating A0 portrait poster (aspect_ratio={aspect_ratio}, density={density}, language={language})")
         else:
             prompt = self._build_poster_prompt(
                 format_prefix=FORMAT_POSTER,
                 style_name=style_name,
                 processed_style=processed_style,
                 sections_md=sections_md,
+                language=language,
             )
             # Landscape: use 16:9 aspect ratio
             aspect_ratio = "16:9"
-            logger.info(f"Generating landscape poster (aspect_ratio={aspect_ratio})")
+            logger.info(f"Generating landscape poster (aspect_ratio={aspect_ratio}, language={language})")
 
         image_data, mime_type = self._call_model(prompt, images, aspect_ratio=aspect_ratio)
         return [GeneratedImage(section_id="poster", image_data=image_data, mime_type=mime_type)]
     
-    def _generate_slides(self, plan, style_name, processed_style: Optional[ProcessedStyle], all_sections_md, figure_images, max_workers: int, save_callback=None) -> List[GeneratedImage]:
+    def _generate_slides(self, plan, style_name, processed_style: Optional[ProcessedStyle], all_sections_md, figure_images, max_workers: int, save_callback=None, language: str = "en") -> List[GeneratedImage]:
         """Generate N slide images (slides 1-2 sequential, 3+ parallel)."""
         results = []
         total = len(plan.sections)
-        
+
         # Select layout rules based on style
         if style_name == "custom":
             layouts = SLIDE_LAYOUTS_DEFAULT
@@ -212,15 +218,15 @@ class ImageGenerator:
             layouts = SLIDE_LAYOUTS_DORAEMON
         else:
             layouts = SLIDE_LAYOUTS_ACADEMIC
-        
+
         style_ref_image = None  # Store 2nd slide as reference for all subsequent slides
-        
+
         # Generate first 2 slides sequentially (slide 1: no ref, slide 2: becomes ref)
         for i in range(min(2, total)):
             section = plan.sections[i]
             section_md = self._format_single_section_markdown(section, plan)
             layout_rule = layouts.get(section.section_type, layouts["content"])
-            
+
             prompt = self._build_slide_prompt(
                 style_name=style_name,
                 processed_style=processed_style,
@@ -228,16 +234,17 @@ class ImageGenerator:
                 layout_rule=layout_rule,
                 slide_info=f"Slide {i+1} of {total}",
                 context_md=all_sections_md,
+                language=language,
             )
-            
+
             section_images = self._filter_images([section], figure_images)
             reference_images = []
             if style_ref_image:
                 reference_images.append(style_ref_image)
             reference_images.extend(section_images)
-            
+
             image_data, mime_type = self._call_model(prompt, reference_images)
-            
+
             # Save 2nd slide (i=1) as style reference
             if i == 1:
                 style_ref_image = {
@@ -246,22 +253,22 @@ class ImageGenerator:
                     "base64": base64.b64encode(image_data).decode("utf-8"),
                     "mime_type": mime_type,
                 }
-            
+
             generated_img = GeneratedImage(section_id=section.id, image_data=image_data, mime_type=mime_type)
             results.append(generated_img)
-            
+
             # Save immediately if callback provided
             if save_callback:
                 save_callback(generated_img, i, total)
-        
+
         # Generate remaining slides in parallel (from 3rd onwards)
         if total > 2:
             results_dict = {}
-            
+
             def generate_single(i, section):
                 section_md = self._format_single_section_markdown(section, plan)
                 layout_rule = layouts.get(section.section_type, layouts["content"])
-                
+
                 prompt = self._build_slide_prompt(
                     style_name=style_name,
                     processed_style=processed_style,
@@ -269,40 +276,42 @@ class ImageGenerator:
                     layout_rule=layout_rule,
                     slide_info=f"Slide {i+1} of {total}",
                     context_md=all_sections_md,
+                    language=language,
                 )
-                
+
                 section_images = self._filter_images([section], figure_images)
                 reference_images = [style_ref_image] if style_ref_image else []
                 reference_images.extend(section_images)
-                
+
                 image_data, mime_type = self._call_model(prompt, reference_images)
                 return i, GeneratedImage(section_id=section.id, image_data=image_data, mime_type=mime_type)
-            
+
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
                     executor.submit(generate_single, i, plan.sections[i]): i
                     for i in range(2, total)
                 }
-                
+
                 for future in as_completed(futures):
                     idx, generated_img = future.result()
                     results_dict[idx] = generated_img
-                    
+
                     # Save immediately if callback provided
                     if save_callback:
                         save_callback(generated_img, idx, total)
-            
+
             # Append in order
             for i in range(2, total):
                 results.append(results_dict[i])
         
         return results
     
-    def _format_custom_style_for_poster(self, ps: ProcessedStyle) -> str:
+    def _format_custom_style_for_poster(self, ps: ProcessedStyle, language: str = "en") -> str:
         """Format ProcessedStyle into style hints string for poster."""
+        lang_hint = get_language_hint(language)
         parts = [
             ps.style_name + ".",
-            "English text only.",
+            lang_hint,
             "Use ROUNDED sans-serif fonts for ALL text.",
             "Characters should react to or interact with the content, with appropriate poses/actions and sizes - not just decoration."
             f"LIMITED COLOR PALETTE (3-4 colors max): {ps.color_tone}.",
@@ -311,12 +320,13 @@ class ImageGenerator:
         if ps.special_elements:
             parts.append(ps.special_elements + ".")
         return " ".join(parts)
-    
-    def _format_custom_style_for_slide(self, ps: ProcessedStyle) -> str:
+
+    def _format_custom_style_for_slide(self, ps: ProcessedStyle, language: str = "en") -> str:
         """Format ProcessedStyle into style hints string for slide."""
+        lang_hint = get_language_hint(language)
         parts = [
             ps.style_name + ".",
-            "English text only.",
+            lang_hint,
             "Use ROUNDED sans-serif fonts for ALL text.",
             "Characters should react to or interact with the content, with appropriate poses/actions and sizes - not just decoration.",
             f"LIMITED COLOR PALETTE (3-4 colors max): {ps.color_tone}.",
@@ -325,13 +335,17 @@ class ImageGenerator:
         if ps.special_elements:
             parts.append(ps.special_elements + ".")
         return " ".join(parts)
-    
-    def _build_poster_prompt(self, format_prefix, style_name, processed_style: Optional[ProcessedStyle], sections_md) -> str:
+
+    def _build_poster_prompt(self, format_prefix, style_name, processed_style: Optional[ProcessedStyle], sections_md, language: str = "en") -> str:
         """Build prompt for poster."""
         parts = [format_prefix]
 
+        # Add language hint
+        lang_hint = get_language_hint(language)
+        parts.append(lang_hint)
+
         if style_name == "custom" and processed_style:
-            parts.append(f"Style: {self._format_custom_style_for_poster(processed_style)}")
+            parts.append(f"Style: {self._format_custom_style_for_poster(processed_style, language)}")
             if processed_style.decorations:
                 parts.append(f"Decorations: {processed_style.decorations}")
         else:
@@ -343,12 +357,13 @@ class ImageGenerator:
 
         return "\n\n".join(parts)
 
-    def _format_custom_style_for_poster_a0(self, ps: ProcessedStyle) -> str:
+    def _format_custom_style_for_poster_a0(self, ps: ProcessedStyle, language: str = "en") -> str:
         """Format ProcessedStyle into style hints string for A0 portrait poster."""
+        lang_hint = get_language_hint(language)
         parts = [
             ps.style_name + ".",
             "PORTRAIT A0 format (841mm x 1189mm, vertical layout).",
-            "English text only.",
+            lang_hint,
             "Use PROFESSIONAL sans-serif fonts for ALL text.",
             f"LIMITED COLOR PALETTE (3-4 colors max): {ps.color_tone}.",
             "Title bar at TOP with contrasting background.",
@@ -365,14 +380,19 @@ class ImageGenerator:
         style_name: str,
         processed_style: Optional[ProcessedStyle],
         sections_md: str,
-        density: str = "medium"
+        density: str = "medium",
+        language: str = "en"
     ) -> str:
         """Build prompt for A0 portrait poster."""
         parts = [FORMAT_POSTER_A0]
 
+        # Add language hint
+        lang_hint = get_language_hint(language)
+        parts.append(lang_hint)
+
         # Add style-specific hints for A0 format
         if style_name == "custom" and processed_style:
-            parts.append(f"Style: {self._format_custom_style_for_poster_a0(processed_style)}")
+            parts.append(f"Style: {self._format_custom_style_for_poster_a0(processed_style, language)}")
             if processed_style.decorations:
                 parts.append(f"Decorations: {processed_style.decorations}")
         else:
@@ -389,29 +409,33 @@ class ImageGenerator:
         parts.append(f"---\nContent:\n{sections_md}")
 
         return "\n\n".join(parts)
-    
-    def _build_slide_prompt(self, style_name, processed_style: Optional[ProcessedStyle], sections_md, layout_rule, slide_info, context_md) -> str:
+
+    def _build_slide_prompt(self, style_name, processed_style: Optional[ProcessedStyle], sections_md, layout_rule, slide_info, context_md, language: str = "en") -> str:
         """Build prompt for slide with layout rules and consistency."""
         parts = [FORMAT_SLIDE]
-        
+
+        # Add language hint
+        lang_hint = get_language_hint(language)
+        parts.append(lang_hint)
+
         if style_name == "custom" and processed_style:
-            parts.append(f"Style: {self._format_custom_style_for_slide(processed_style)}")
+            parts.append(f"Style: {self._format_custom_style_for_slide(processed_style, language)}")
         else:
             parts.append(SLIDE_STYLE_HINTS.get(style_name, SLIDE_STYLE_HINTS["academic"]))
-        
+
         # Add layout rule, then decorations if custom style
         parts.append(layout_rule)
         if style_name == "custom" and processed_style and processed_style.decorations:
             parts.append(f"Decorations: {processed_style.decorations}")
-        
+
         parts.append(VISUALIZATION_HINTS)
         parts.append(CONSISTENCY_HINT)
         parts.append(SLIDE_FIGURE_HINT)
-        
+
         parts.append(slide_info)
         parts.append(f"---\nFull presentation context:\n{context_md}")
         parts.append(f"---\nThis slide content:\n{sections_md}")
-        
+
         return "\n\n".join(parts)
     
     def _format_sections_markdown(self, plan: ContentPlan) -> str:

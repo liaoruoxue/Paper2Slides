@@ -52,6 +52,8 @@ def main():
                         help="Slides length (default: short)")
     parser.add_argument("--density", choices=["sparse", "medium", "dense"], default="medium",
                         help="Poster density (default: medium)")
+    parser.add_argument("--language", "-l", default="en",
+                        help="Output language: en, zh, ja, ko, etc. (default: en)")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR,
                         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})")
     parser.add_argument("--from-stage", choices=STAGES,
@@ -101,6 +103,7 @@ def main():
         "custom_style": custom_style,
         "slides_length": args.length,
         "poster_density": args.density,
+        "language": args.language,
         "fast_mode": args.fast,
         "max_workers": args.parallel if args.parallel else 1,
     }
