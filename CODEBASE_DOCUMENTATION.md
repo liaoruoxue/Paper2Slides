@@ -26,10 +26,33 @@ pip install -e .
 
 # 2. 配置 API 密钥
 cp paper2slides/.env.example paper2slides/.env
-# 编辑 .env 填入 OpenAI 和 OpenRouter API 密钥
+# 编辑 .env 填入 API 密钥（支持 OpenRouter 或 Google GenAI）
 
 # 3. 生成幻灯片
 python -m paper2slides --input paper.pdf --style doraemon --length medium
+```
+
+### 图像生成提供商配置
+
+系统支持两种图像生成提供商，可通过环境变量切换：
+
+#### OpenRouter（默认）
+```bash
+# .env
+IMAGE_GEN_PROVIDER="openrouter"
+IMAGE_GEN_API_KEY="your-openrouter-api-key"
+IMAGE_GEN_MODEL="google/gemini-3-pro-image-preview"
+```
+
+#### Google GenAI（直连）
+```bash
+# .env
+IMAGE_GEN_PROVIDER="google"
+GOOGLE_API_KEY="your-google-api-key"
+IMAGE_GEN_MODEL="gemini-3-pro-image-preview"
+
+# 需要安装额外依赖
+pip install google-generativeai
 ```
 
 ### 两种使用模式
@@ -66,6 +89,9 @@ Paper2Slides/
 │   ├── raganything/      # RAG 引擎
 │   ├── summary/          # 内容提取
 │   ├── generator/        # 图像生成
+│   │   ├── providers.py  # 图像生成提供商（OpenRouter/GoogleGenAI）
+│   │   ├── image_generator.py  # 图像生成主逻辑
+│   │   └── content_planner.py  # 内容规划
 │   └── prompts/          # LLM 提示词
 │
 ├── api/                  # Web API (FastAPI)
@@ -681,6 +707,132 @@ PAGE_CONFIGS = {
 
 **文件位置**: `paper2slides/core/stages/generate_stage.py`
 
+#### 图像生成提供商系统
+
+系统支持多种图像生成提供商，通过抽象工厂模式实现灵活切换：
+
+**文件位置**: `paper2slides/generator/providers.py`
+
+```python
+# 抽象基类
+class ImageGenerationProvider(ABC):
+    """图像生成提供商抽象基类"""
+
+    @abstractmethod
+    def generate_image(self, request: ImageGenerationRequest) -> ImageGenerationResponse:
+        """生成图像"""
+        pass
+
+    @abstractmethod
+    def get_default_model(self) -> str:
+        """获取默认模型名"""
+        pass
+
+
+# OpenRouter 提供商（默认）
+class OpenRouterProvider(ImageGenerationProvider):
+    """通过 OpenRouter 调用 Gemini"""
+
+    def __init__(
+        self,
+        api_key: str = None,
+        base_url: str = "https://openrouter.ai/api/v1",
+        model: str = "google/gemini-3-pro-image-preview"
+    ):
+        self.api_key = api_key or os.getenv("IMAGE_GEN_API_KEY")
+        self.client = OpenAI(api_key=self.api_key, base_url=base_url)
+
+    def generate_image(self, request):
+        # 使用 OpenAI 兼容 API
+        response = self.client.chat.completions.create(
+            model=request.model or self.default_model,
+            messages=[{"role": "user", "content": content}],
+            extra_body={"modalities": ["image", "text"]}
+        )
+        # 从 response.choices[0].message.images 提取图像
+        ...
+
+
+# Google GenAI 提供商（直连）
+class GoogleGenAIProvider(ImageGenerationProvider):
+    """直接调用 Google GenAI API"""
+
+    def __init__(
+        self,
+        api_key: str = None,
+        model: str = "gemini-3-pro-image-preview"
+    ):
+        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        from google import genai
+        from google.genai import types
+        self.client = genai.Client(api_key=self.api_key)
+        self.types = types
+
+    def generate_image(self, request):
+        # 使用 Google GenAI 原生 API
+        config = self.types.GenerateContentConfig(
+            response_modalities=['TEXT', 'IMAGE'],
+            image_config=self.types.ImageConfig(
+                aspect_ratio="16:9",
+                image_size="4K"
+            )
+        )
+        response = self.client.models.generate_content(
+            model=request.model or self.default_model,
+            contents=content_parts,
+            config=config
+        )
+        # 从 response.parts 提取图像
+        for part in response.parts:
+            image = part.as_image()
+            if image:
+                image.save(tmp_path)
+                ...
+
+
+# 提供商工厂
+class ProviderFactory:
+    """图像生成提供商工厂"""
+
+    PROVIDERS = {
+        "openrouter": OpenRouterProvider,
+        "google": GoogleGenAIProvider,
+        "genai": GoogleGenAIProvider,  # 别名
+    }
+
+    @classmethod
+    def from_env(cls) -> ImageGenerationProvider:
+        """从环境变量创建提供商"""
+        provider_name = os.getenv("IMAGE_GEN_PROVIDER", "openrouter")
+
+        if provider_name == "openrouter":
+            return OpenRouterProvider(
+                api_key=os.getenv("IMAGE_GEN_API_KEY"),
+                model=os.getenv("IMAGE_GEN_MODEL", "google/gemini-3-pro-image-preview")
+            )
+        elif provider_name in ["google", "genai"]:
+            return GoogleGenAIProvider(
+                api_key=os.getenv("GOOGLE_API_KEY"),
+                model=os.getenv("IMAGE_GEN_MODEL", "gemini-3-pro-image-preview")
+            )
+```
+
+#### 环境变量配置
+
+```bash
+# .env 文件配置示例
+
+# 选项 1: 使用 OpenRouter（默认）
+IMAGE_GEN_PROVIDER="openrouter"
+IMAGE_GEN_API_KEY="your-openrouter-api-key"
+IMAGE_GEN_MODEL="google/gemini-3-pro-image-preview"
+
+# 选项 2: 使用 Google GenAI 直连
+IMAGE_GEN_PROVIDER="google"
+GOOGLE_API_KEY="your-google-api-key"
+IMAGE_GEN_MODEL="gemini-3-pro-image-preview"
+```
+
 #### 核心策略：混合并行生成
 
 ```python
@@ -909,52 +1061,114 @@ def process_custom_style(llm_client, custom_style_description):
     return style_params
 ```
 
-#### API 调用
+#### API 调用（通过提供商抽象）
 
 ```python
-# generator/image_generator.py:400
-def _call_model(self, prompt, images):
-    """调用 Gemini 3 Pro 图像生成模型"""
+# generator/image_generator.py
+class ImageGenerator:
+    """使用提供商抽象进行图像生成"""
 
+    def __init__(self, provider: ImageGenerationProvider = None, model: str = None):
+        # 从环境变量自动创建提供商
+        self.provider = provider or ProviderFactory.from_env()
+        self.model = model or self.provider.get_default_model()
+
+    def _call_model(self, prompt: str, reference_images: List[dict]) -> tuple:
+        """调用图像生成模型（带重试）"""
+
+        # 1. 创建请求
+        request = ImageGenerationRequest(
+            prompt=prompt,
+            reference_images=reference_images,
+            model=self.model
+        )
+
+        # 2. 重试逻辑
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # 3. 调用提供商（自动路由到 OpenRouter 或 Google GenAI）
+                response = self.provider.generate_image(request)
+                return response.image_data, response.mime_type
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                raise
+```
+
+#### OpenRouter 调用流程
+
+```python
+# OpenRouterProvider.generate_image()
+def generate_image(self, request):
     # 1. 构建消息内容（多模态）
-    content_parts = [{"type": "text", "text": prompt}]
+    content = [{"type": "text", "text": request.prompt}]
 
-    # 2. 添加图片（风格参考 + 内容图片）
-    for img in images:
-        content_parts.append({
+    # 2. 添加参考图片
+    for img in request.reference_images:
+        content.append({
             "type": "image_url",
-            "image_url": {
-                "url": f"data:{img['mime_type']};base64,{img['base64']}"
-            }
+            "image_url": {"url": f"data:{img['mime_type']};base64,{img['base64']}"}
         })
 
-    # 3. 调用 OpenRouter API
-    response = self.llm_client.chat.completions.create(
-        model="google/gemini-3-pro-image-preview",
-        messages=[{
-            "role": "user",
-            "content": content_parts
-        }],
-        extra_body={
-            "modalities": ["image", "text"],  # 启用图像输出
-            "max_tokens": 4096
-        }
+    # 3. 调用 OpenRouter API（OpenAI 兼容格式）
+    response = self.client.chat.completions.create(
+        model=request.model or self.default_model,
+        messages=[{"role": "user", "content": content}],
+        extra_body={"modalities": ["image", "text"]}
     )
 
-    # 4. 提取生成的图像
-    if not response.choices[0].message.images:
-        raise Exception("No image generated")
+    # 4. 提取图像
+    image_url = response.choices[0].message.images[0]['image_url']['url']
+    # data:image/png;base64,... 格式
+    header, base64_data = image_url.split(',', 1)
+    mime_type = header.split(':')[1].split(';')[0]
+    image_data = base64.b64decode(base64_data)
 
-    image_data = response.choices[0].message.images[0]
-    image_url = image_data['image_url']['url']
+    return ImageGenerationResponse(image_data=image_data, mime_type=mime_type)
+```
 
-    # 5. 解码 base64
-    if image_url.startswith("data:image/png;base64,"):
-        base64_str = image_url.split(",", 1)[1]
-        image_bytes = base64.b64decode(base64_str)
-        return image_bytes
-    else:
-        raise ValueError(f"Unexpected image URL format: {image_url[:50]}")
+#### Google GenAI 调用流程
+
+```python
+# GoogleGenAIProvider.generate_image()
+def generate_image(self, request):
+    # 1. 构建内容列表
+    content_parts = [request.prompt]
+
+    # 2. 添加参考图片（PIL Image 格式）
+    for img in request.reference_images:
+        image_bytes = base64.b64decode(img['base64'])
+        pil_image = Image.open(io.BytesIO(image_bytes))
+        content_parts.append(pil_image)
+
+    # 3. 配置图像生成参数
+    config = self.types.GenerateContentConfig(
+        response_modalities=['TEXT', 'IMAGE'],
+        image_config=self.types.ImageConfig(
+            aspect_ratio="16:9",
+            image_size="4K"
+        )
+    )
+
+    # 4. 调用 Google GenAI API
+    response = self.client.models.generate_content(
+        model=request.model or self.default_model,
+        contents=content_parts,
+        config=config
+    )
+
+    # 5. 从 response.parts 提取图像
+    for part in response.parts:
+        image = part.as_image()
+        if image:
+            # 保存到临时文件
+            image.save(tmp_path)
+            with open(tmp_path, 'rb') as f:
+                image_data = f.read()
+            return ImageGenerationResponse(image_data=image_data, mime_type="image/png")
 ```
 
 ---
@@ -2457,7 +2671,112 @@ async def run_pipeline(base_dir, config_dir, config, from_stage):
 
 ---
 
-### 5. 添加新的 LLM 提供商
+### 5. 添加新的图像生成提供商
+
+**目标**：添加新的图像生成 API（如 Stability AI、DALL-E 等）
+
+系统已实现提供商抽象，添加新提供商只需实现 `ImageGenerationProvider` 接口。
+
+#### 步骤 1：实现提供商类
+
+```python
+# generator/providers.py
+
+class StabilityAIProvider(ImageGenerationProvider):
+    """Stability AI 提供商示例"""
+
+    def __init__(self, api_key: str = None, model: str = "stable-diffusion-xl"):
+        self.api_key = api_key or os.getenv("STABILITY_API_KEY")
+        self.default_model = model
+
+        if not self.api_key:
+            raise ValueError("Stability AI API key is required")
+
+        # 初始化客户端
+        import stability_sdk
+        self.client = stability_sdk.Client(api_key=self.api_key)
+
+    def get_default_model(self) -> str:
+        return self.default_model
+
+    def generate_image(self, request: ImageGenerationRequest) -> ImageGenerationResponse:
+        """生成图像"""
+        # 构建请求
+        # 注意：不同 API 可能不支持参考图片
+        result = self.client.generate(
+            prompt=request.prompt,
+            model=request.model or self.default_model
+        )
+
+        # 提取图像
+        image_data = result.images[0].bytes
+        mime_type = "image/png"
+
+        return ImageGenerationResponse(image_data=image_data, mime_type=mime_type)
+```
+
+#### 步骤 2：注册到工厂
+
+```python
+# generator/providers.py
+
+class ProviderFactory:
+    PROVIDERS = {
+        "openrouter": OpenRouterProvider,
+        "google": GoogleGenAIProvider,
+        "genai": GoogleGenAIProvider,
+        "stability": StabilityAIProvider,  # 新增
+    }
+
+    @classmethod
+    def from_env(cls) -> ImageGenerationProvider:
+        provider_name = os.getenv("IMAGE_GEN_PROVIDER", "openrouter").lower()
+
+        if provider_name == "stability":
+            return StabilityAIProvider(
+                api_key=os.getenv("STABILITY_API_KEY"),
+                model=os.getenv("IMAGE_GEN_MODEL", "stable-diffusion-xl")
+            )
+        # ... 其他提供商
+```
+
+#### 步骤 3：更新配置文档
+
+```bash
+# .env.example 添加
+
+# --- Stability AI Provider Settings ---
+# Required when IMAGE_GEN_PROVIDER="stability"
+# STABILITY_API_KEY=""
+# IMAGE_GEN_MODEL="stable-diffusion-xl"
+```
+
+#### 步骤 4：添加测试
+
+```python
+# tests/test_providers.py
+
+def test_stability_provider():
+    """测试 Stability AI 提供商"""
+    api_key = os.getenv("STABILITY_API_KEY")
+    if not api_key:
+        pytest.skip("STABILITY_API_KEY not set")
+
+    provider = StabilityAIProvider(api_key=api_key)
+
+    request = ImageGenerationRequest(
+        prompt="A simple test image",
+        reference_images=[]
+    )
+
+    response = provider.generate_image(request)
+    assert response.image_data
+    assert response.mime_type == "image/png"
+```
+
+---
+
+### 6. 添加新的文本 LLM 提供商
 
 **目标**：支持 Anthropic Claude 作为文本模型
 
@@ -2615,7 +2934,7 @@ async def extract_paper(rag_results, llm_provider=None, **kwargs):
 
 ---
 
-### 6. 自定义后处理
+### 7. 自定义后处理
 
 #### 后处理器框架
 
@@ -2980,7 +3299,9 @@ services:
       - ./sources:/app/sources
     environment:
       - RAG_LLM_API_KEY=${RAG_LLM_API_KEY}
+      - IMAGE_GEN_PROVIDER=${IMAGE_GEN_PROVIDER:-openrouter}
       - IMAGE_GEN_API_KEY=${IMAGE_GEN_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     restart: unless-stopped
 
   frontend:
@@ -3309,8 +3630,9 @@ style_reference = {
 
 ---
 
-**生成日期**: 2023-12-10
-**文档版本**: 1.0
+**生成日期**: 2025-12-10
+**文档版本**: 1.1
+**最后更新**: 添加图像生成提供商系统（OpenRouter/Google GenAI）
 **作者**: Paper2Slides Team
 
 ---
