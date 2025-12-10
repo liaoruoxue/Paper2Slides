@@ -20,6 +20,7 @@ class ImageGenerationRequest:
     prompt: str
     reference_images: List[Dict]  # List of {figure_id, caption, base64, mime_type}
     model: str = None
+    aspect_ratio: str = "16:9"  # Default to landscape, use "9:16" for portrait
 
 
 @dataclass
@@ -86,7 +87,7 @@ class OpenRouterProvider(ImageGenerationProvider):
                     "image_url": {"url": f"data:{img['mime_type']};base64,{img['base64']}"}
                 })
 
-        logger.debug(f"Calling OpenRouter API with model: {model}")
+        logger.debug(f"Calling OpenRouter API with model: {model}, aspect_ratio: {request.aspect_ratio}")
 
         # Call API
         response = self.client.chat.completions.create(
@@ -176,13 +177,14 @@ class GoogleGenAIProvider(ImageGenerationProvider):
                 pil_image = Image.open(io.BytesIO(image_bytes))
                 content_parts.append(pil_image)
 
-        logger.debug(f"Calling Google GenAI API with model: {model_name}")
+        logger.debug(f"Calling Google GenAI API with model: {model_name}, aspect_ratio: {request.aspect_ratio}")
 
         # Configure generation with image output (following official example)
+        # Use aspect_ratio from request (default 16:9 for slides, 9:16 for portrait posters)
         config = self.types.GenerateContentConfig(
             response_modalities=['TEXT', 'IMAGE'],  # Request both text and image
-            image_config=self.types.ImageConfig(    # Note: ImageConfig not ImageGenerationConfig
-                aspect_ratio="16:9",  # For slides
+            image_config=self.types.ImageConfig(
+                aspect_ratio=request.aspect_ratio,  # Dynamic aspect ratio
                 image_size="4K"       # High quality: "1K", "2K", "4K"
             )
         )

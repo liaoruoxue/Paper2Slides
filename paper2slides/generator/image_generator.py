@@ -173,6 +173,7 @@ class ImageGenerator:
         density: str = "medium"
     ) -> List[GeneratedImage]:
         """Generate 1 poster image (landscape 16:9 or portrait A0)."""
+        logger = logging.getLogger(__name__)
         is_a0 = poster_format == PosterFormat.PORTRAIT_A0
 
         if is_a0:
@@ -182,6 +183,9 @@ class ImageGenerator:
                 sections_md=sections_md,
                 density=density,
             )
+            # A0 portrait: use 9:16 aspect ratio (closest to 841:1189 ≈ 1:1.41)
+            aspect_ratio = "9:16"
+            logger.info(f"Generating A0 portrait poster (aspect_ratio={aspect_ratio}, density={density})")
         else:
             prompt = self._build_poster_prompt(
                 format_prefix=FORMAT_POSTER,
@@ -189,8 +193,11 @@ class ImageGenerator:
                 processed_style=processed_style,
                 sections_md=sections_md,
             )
+            # Landscape: use 16:9 aspect ratio
+            aspect_ratio = "16:9"
+            logger.info(f"Generating landscape poster (aspect_ratio={aspect_ratio})")
 
-        image_data, mime_type = self._call_model(prompt, images)
+        image_data, mime_type = self._call_model(prompt, images, aspect_ratio=aspect_ratio)
         return [GeneratedImage(section_id="poster", image_data=image_data, mime_type=mime_type)]
     
     def _generate_slides(self, plan, style_name, processed_style: Optional[ProcessedStyle], all_sections_md, figure_images, max_workers: int, save_callback=None) -> List[GeneratedImage]:
@@ -478,7 +485,7 @@ class ImageGenerator:
                 used_ids.add(ref.figure_id)
         return [img for img in figure_images if img.get("figure_id") in used_ids]
     
-    def _call_model(self, prompt: str, reference_images: List[dict]) -> tuple:
+    def _call_model(self, prompt: str, reference_images: List[dict], aspect_ratio: str = "16:9") -> tuple:
         """Call the image generation model with retry logic."""
         logger = logging.getLogger(__name__)
 
@@ -486,7 +493,8 @@ class ImageGenerator:
         request = ImageGenerationRequest(
             prompt=prompt,
             reference_images=reference_images,
-            model=self.model
+            model=self.model,
+            aspect_ratio=aspect_ratio
         )
 
         # Retry logic for API calls
