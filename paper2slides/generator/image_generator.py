@@ -16,6 +16,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .config import GenerationInput
 from .content_planner import ContentPlan, Section
+from .providers import (
+    ProviderFactory,
+    ImageGenerationProvider,
+    ImageGenerationRequest,
+)
 from ..prompts.image_generation import (
     STYLE_PROCESS_PROMPT,
     FORMAT_POSTER,
@@ -53,10 +58,22 @@ class ProcessedStyle:
     error: Optional[str] = None
 
 
-def process_custom_style(client: OpenAI, user_style: str, model: str = None) -> ProcessedStyle:
+def process_custom_style(user_style: str, model: str = None) -> ProcessedStyle:
     """Process user's custom style request with LLM."""
     model = model or os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
-    
+
+    # Use OpenAI client for style processing (separate from image generation)
+    api_key = os.getenv("RAG_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("RAG_LLM_BASE_URL")
+
+    if not api_key:
+        return ProcessedStyle(
+            style_name="", color_tone="", special_elements="", decorations="",
+            valid=False, error="No LLM API key found for style processing"
+        )
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+
     try:
         response = client.chat.completions.create(
             model=model,
@@ -78,17 +95,24 @@ def process_custom_style(client: OpenAI, user_style: str, model: str = None) -> 
 
 class ImageGenerator:
     """Generate poster/slides images from ContentPlan."""
-    
+
     def __init__(
         self,
-        api_key: str = None,
-        base_url: str = None,
-        model: str = "google/gemini-3-pro-image-preview",
+        provider: ImageGenerationProvider = None,
+        model: str = None,
     ):
-        self.api_key = api_key or os.getenv("IMAGE_GEN_API_KEY", "")
-        self.base_url = base_url or os.getenv("IMAGE_GEN_BASE_URL", "https://openrouter.ai/api/v1")
-        self.model = model
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        """
+        Initialize ImageGenerator.
+
+        Args:
+            provider: ImageGenerationProvider instance (if None, creates from environment)
+            model: Model name (if None, uses provider's default)
+        """
+        self.provider = provider or ProviderFactory.from_env()
+        self.model = model or self.provider.get_default_model()
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"ImageGenerator initialized with provider: {type(self.provider).__name__}, model: {self.model}")
     
     def generate(
         self,
@@ -116,7 +140,7 @@ class ImageGenerator:
         # Process custom style with LLM if needed
         processed_style = None
         if style_name == "custom" and custom_style:
-            processed_style = process_custom_style(self.client, custom_style)
+            processed_style = process_custom_style(custom_style)
             if not processed_style.valid:
                 raise ValueError(f"Invalid custom style: {processed_style.error}")
         
@@ -384,74 +408,35 @@ class ImageGenerator:
     def _call_model(self, prompt: str, reference_images: List[dict]) -> tuple:
         """Call the image generation model with retry logic."""
         logger = logging.getLogger(__name__)
-        content = [{"type": "text", "text": prompt}]
-        
-        # Add each image with figure_id and caption label
-        for img in reference_images:
-            if img.get("base64") and img.get("mime_type"):
-                fig_id = img.get("figure_id", "Figure")
-                caption = img.get("caption", "")
-                label = f"[{fig_id}]: {caption}" if caption else f"[{fig_id}]"
-                content.append({"type": "text", "text": label})
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{img['mime_type']};base64,{img['base64']}"}
-                })
-        
+
+        # Create generation request
+        request = ImageGenerationRequest(
+            prompt=prompt,
+            reference_images=reference_images,
+            model=self.model
+        )
+
         # Retry logic for API calls
         max_retries = 3
         retry_delay = 2  # seconds
-        
+
         for attempt in range(max_retries):
             try:
                 logger.info(f"Calling image generation API (attempt {attempt + 1}/{max_retries})...")
-                
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "user", "content": content}],
-                    extra_body={"modalities": ["image", "text"]}
-                )
-                
-                # Check if response is valid
-                if response is None:
-                    error_msg = "API returned None response - possible rate limit or API error"
-                    logger.warning(f"{error_msg} (attempt {attempt + 1}/{max_retries})")
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay * (attempt + 1))
-                        continue
-                    raise RuntimeError(error_msg)
-                
-                if not hasattr(response, 'choices') or not response.choices:
-                    error_msg = f"API response has no choices: {response}"
-                    logger.warning(f"{error_msg} (attempt {attempt + 1}/{max_retries})")
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay * (attempt + 1))
-                        continue
-                    raise RuntimeError(error_msg)
-                
-                message = response.choices[0].message
-                if hasattr(message, 'images') and message.images:
-                    image_url = message.images[0]['image_url']['url']
-                    if image_url.startswith('data:'):
-                        header, base64_data = image_url.split(',', 1)
-                        mime_type = header.split(':')[1].split(';')[0]
-                        logger.info("Image generation successful")
-                        return base64.b64decode(base64_data), mime_type
-                
-                error_msg = "Image generation failed - no images in response"
-                logger.warning(f"{error_msg} (attempt {attempt + 1}/{max_retries})")
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay * (attempt + 1))
-                    continue
-                raise RuntimeError(error_msg)
-                
+
+                # Call provider
+                response = self.provider.generate_image(request)
+
+                logger.info("Image generation successful")
+                return response.image_data, response.mime_type
+
             except Exception as e:
                 logger.error(f"Error in API call (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay * (attempt + 1))
                     continue
                 raise
-        
+
         raise RuntimeError("Image generation failed after all retry attempts")
 
 

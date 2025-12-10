@@ -13,6 +13,10 @@ reportlab>=4.0.0
 openai>=1.0.0
 python-dotenv>=1.0.0
 
+# Image Generation Providers (optional)
+# For Google GenAI provider:
+# google-generativeai>=0.3.0
+
 # Data Processing
 pyyaml>=6.0
 requests>=2.28.0
@@ -23,3 +27,5 @@ fastapi==0.122
 uvicorn[standard]==0.38.0
 python-multipart==0.0.20
 pydantic==2.12.3
+
+google-generativeai
