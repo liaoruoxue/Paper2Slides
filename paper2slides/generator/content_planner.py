@@ -4,24 +4,33 @@ Content Planner
 import json
 import base64
 import re
+import logging
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from openai import OpenAI
 
 from .config import GenerationInput, OutputType, PosterFormat
 from ..summary import FigureInfo, TableInfo
 from ..prompts.content_planning import (
+    # Stage 1: Content Analysis
+    CONTENT_ANALYSIS_PROMPT,
+    # Stage 2: Adaptive Planning (new)
+    ADAPTIVE_SLIDES_PLANNING_PROMPT,
+    ADAPTIVE_POSTER_PLANNING_PROMPT,
+    ADAPTIVE_POSTER_A0_PLANNING_PROMPT,
+    # Density guidelines (still used)
+    PAPER_POSTER_DENSITY_GUIDELINES,
+    PAPER_POSTER_A0_LAYOUT_GUIDELINES,
+    GENERAL_POSTER_DENSITY_GUIDELINES,
+    GENERAL_POSTER_A0_LAYOUT_GUIDELINES,
+    # Legacy prompts (kept for reference, but not used in adaptive mode)
     PAPER_SLIDES_PLANNING_PROMPT,
     PAPER_POSTER_PLANNING_PROMPT,
-    PAPER_POSTER_DENSITY_GUIDELINES,
     PAPER_POSTER_A0_PLANNING_PROMPT,
-    PAPER_POSTER_A0_LAYOUT_GUIDELINES,
     GENERAL_SLIDES_PLANNING_PROMPT,
     GENERAL_POSTER_PLANNING_PROMPT,
-    GENERAL_POSTER_DENSITY_GUIDELINES,
     GENERAL_POSTER_A0_PLANNING_PROMPT,
-    GENERAL_POSTER_A0_LAYOUT_GUIDELINES,
 )
 
 
@@ -113,47 +122,53 @@ class ContentPlan:
 
 
 class ContentPlanner:
-    """Plans content structure using multimodal LLM."""
-    
+    """Plans content structure using multimodal LLM with two-stage adaptive planning."""
+
     def __init__(
         self,
         api_key: str = None,
         base_url: str = None,
-        model: str = "gpt-4o",
+        model: str = "gpt-5.1",
     ):
         import os
         self.api_key = api_key or os.getenv("RAG_LLM_API_KEY", "")
         self.base_url = base_url or os.getenv("RAG_LLM_BASE_URL")
         self.model = model
-        
+        self.logger = logging.getLogger(__name__)
+
         kwargs = {"api_key": self.api_key}
         if self.base_url:
             kwargs["base_url"] = self.base_url
         self.client = OpenAI(**kwargs)
-    
+
     def plan(self, gen_input: GenerationInput) -> ContentPlan:
-        """Create a content plan from generation input."""
+        """Create a content plan from generation input using two-stage adaptive planning."""
         # Build tables index
         tables_index = {}
         for tbl in gen_input.origin.tables:
             tables_index[tbl.table_id] = tbl
-        
+
         # Build figures index
         figures_index = {}
         for fig in gen_input.origin.figures:
             figures_index[fig.figure_id] = fig
-        
+
         # Get summary and format tables/figures
         summary = gen_input.get_summary_text()
         tables_md = gen_input.origin.get_tables_markdown()
         figure_images = self._load_figure_images(gen_input.origin)
-        
-        # Plan based on output type
+
+        # Stage 1: Analyze what content actually exists
+        self.logger.info("Stage 1: Analyzing content structure...")
+        content_analysis = self._analyze_content(summary)
+        self.logger.info(f"Content analysis complete: {self._summarize_analysis(content_analysis)}")
+
+        # Stage 2: Plan based on output type using adaptive prompts
         if gen_input.config.output_type == OutputType.POSTER:
-            sections = self._plan_poster(gen_input, summary, tables_md, figure_images)
+            sections = self._plan_poster_adaptive(gen_input, summary, tables_md, figure_images, content_analysis)
         else:
-            sections = self._plan_slides(gen_input, summary, tables_md, figure_images)
-        
+            sections = self._plan_slides_adaptive(gen_input, summary, tables_md, figure_images, content_analysis)
+
         return ContentPlan(
             output_type=gen_input.config.output_type.value,
             sections=sections,
@@ -166,9 +181,173 @@ class ContentPlanner:
                                  if gen_input.config.output_type == OutputType.POSTER else None,
                 "page_range": gen_input.config.get_page_range()
                              if gen_input.config.output_type == OutputType.SLIDES else None,
+                "content_analysis": content_analysis,
             },
         )
-    
+
+    def _analyze_content(self, summary: str) -> Dict[str, Any]:
+        """Stage 1: Analyze what content elements actually exist in the document."""
+        prompt = CONTENT_ANALYSIS_PROMPT.format(summary=self._truncate(summary, 12000))
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_completion_tokens=4000,
+            )
+            result = response.choices[0].message.content or ""
+
+            # Parse JSON response
+            json_match = re.search(r'```json\s*(.*?)\s*```', result, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                json_match = re.search(r'\{.*\}', result, re.DOTALL)
+                json_str = json_match.group(0) if json_match else "{}"
+
+            return json.loads(json_str)
+        except Exception as e:
+            self.logger.error(f"Content analysis failed: {e}")
+            # Return a default analysis that assumes everything might be present
+            return self._default_content_analysis()
+
+    def _default_content_analysis(self) -> Dict[str, Any]:
+        """Return default content analysis when analysis fails."""
+        return {
+            "title": "Document",
+            "authors": "",
+            "content_elements": {
+                "problem_or_motivation": {"present": True, "description": ""},
+                "proposed_approach": {"present": True, "description": ""},
+                "conclusions_or_contributions": {"present": True, "description": ""},
+            },
+            "key_figures": "",
+            "key_tables": "",
+            "main_topic_summary": ""
+        }
+
+    def _summarize_analysis(self, analysis: Dict[str, Any]) -> str:
+        """Create a brief summary of content analysis for logging."""
+        if not analysis or "content_elements" not in analysis:
+            return "analysis failed"
+        elements = analysis.get("content_elements", {})
+        present = [k for k, v in elements.items() if isinstance(v, dict) and v.get("present")]
+        return f"{len(present)} elements present: {', '.join(present[:3])}..."
+
+    def _format_content_analysis(self, analysis: Dict[str, Any]) -> str:
+        """Format content analysis for inclusion in planning prompt."""
+        if not analysis or "content_elements" not in analysis:
+            return "Content analysis not available."
+
+        lines = []
+        lines.append(f"**Title**: {analysis.get('title', 'Unknown')}")
+        if analysis.get('authors'):
+            lines.append(f"**Authors**: {analysis.get('authors')}")
+        lines.append(f"**Main Topic**: {analysis.get('main_topic_summary', 'Not specified')}")
+        lines.append("")
+        lines.append("**Available Content Elements:**")
+
+        elements = analysis.get("content_elements", {})
+        for key, value in elements.items():
+            if isinstance(value, dict) and value.get("present"):
+                name = key.replace("_", " ").title()
+                desc = value.get("description", "")
+                if desc:
+                    lines.append(f"- {name}: {desc}")
+                else:
+                    lines.append(f"- {name}: Present")
+
+        lines.append("")
+        lines.append("**NOT Available (do NOT create sections for these):**")
+        for key, value in elements.items():
+            if isinstance(value, dict) and not value.get("present"):
+                name = key.replace("_", " ").title()
+                lines.append(f"- {name}")
+
+        if analysis.get("key_figures"):
+            lines.append(f"\n**Key Figures**: {analysis.get('key_figures')}")
+        if analysis.get("key_tables"):
+            lines.append(f"**Key Tables**: {analysis.get('key_tables')}")
+
+        return "\n".join(lines)
+
+    def _plan_slides_adaptive(
+        self,
+        gen_input: GenerationInput,
+        summary: str,
+        tables_md: str,
+        figure_images: List[Dict],
+        content_analysis: Dict[str, Any],
+    ) -> List[Section]:
+        """Stage 2: Plan slides using adaptive prompt based on content analysis."""
+        min_pages, max_pages = gen_input.config.get_page_range()
+
+        # Build assets section
+        assets_section = self._build_assets_section(tables_md, bool(figure_images))
+
+        # Format content analysis for prompt
+        content_analysis_str = self._format_content_analysis(content_analysis)
+
+        prompt = ADAPTIVE_SLIDES_PLANNING_PROMPT.format(
+            min_pages=min_pages,
+            max_pages=max_pages,
+            summary=self._truncate(summary, 10000),
+            assets_section=assets_section,
+            content_analysis=content_analysis_str,
+        )
+
+        self.logger.info("Stage 2: Generating adaptive slides plan...")
+        result = self._call_multimodal_llm(prompt, figure_images)
+        return self._parse_sections(result, is_slides=True)
+
+    def _plan_poster_adaptive(
+        self,
+        gen_input: GenerationInput,
+        summary: str,
+        tables_md: str,
+        figure_images: List[Dict],
+        content_analysis: Dict[str, Any],
+    ) -> List[Section]:
+        """Stage 2: Plan poster using adaptive prompt based on content analysis."""
+        density = gen_input.config.poster_density.value
+        is_a0 = gen_input.config.poster_format == PosterFormat.PORTRAIT_A0
+
+        # Select density guidelines
+        if gen_input.is_paper():
+            density_guidelines = PAPER_POSTER_DENSITY_GUIDELINES.get(density, PAPER_POSTER_DENSITY_GUIDELINES["medium"])
+            layout_guidelines = PAPER_POSTER_A0_LAYOUT_GUIDELINES.get(density, "") if is_a0 else ""
+        else:
+            density_guidelines = GENERAL_POSTER_DENSITY_GUIDELINES.get(density, GENERAL_POSTER_DENSITY_GUIDELINES["medium"])
+            layout_guidelines = GENERAL_POSTER_A0_LAYOUT_GUIDELINES.get(density, "") if is_a0 else ""
+
+        # Build assets section
+        assets_section = self._build_assets_section(tables_md, bool(figure_images))
+
+        # Format content analysis for prompt
+        content_analysis_str = self._format_content_analysis(content_analysis)
+
+        # Select appropriate template
+        if is_a0:
+            prompt = ADAPTIVE_POSTER_A0_PLANNING_PROMPT.format(
+                summary=self._truncate(summary, 10000),
+                assets_section=assets_section,
+                content_analysis=content_analysis_str,
+                density_guidelines=density_guidelines,
+                layout_guidelines=layout_guidelines,
+            )
+        else:
+            prompt = ADAPTIVE_POSTER_PLANNING_PROMPT.format(
+                summary=self._truncate(summary, 10000),
+                assets_section=assets_section,
+                content_analysis=content_analysis_str,
+                density_guidelines=density_guidelines,
+            )
+
+        self.logger.info("Stage 2: Generating adaptive poster plan...")
+        result = self._call_multimodal_llm(prompt, figure_images)
+        return self._parse_sections(result, is_slides=False)
+
+    # Keep legacy methods for backward compatibility (but they won't be called)
     def _plan_slides(
         self,
         gen_input: GenerationInput,
@@ -176,27 +355,9 @@ class ContentPlanner:
         tables_md: str,
         figure_images: List[Dict],
     ) -> List[Section]:
-        """Plan slides sections."""
-        min_pages, max_pages = gen_input.config.get_page_range()
-
-        # Select prompt template based on content type
-        template = PAPER_SLIDES_PLANNING_PROMPT if gen_input.is_paper() else GENERAL_SLIDES_PLANNING_PROMPT
-
-        # Build assets section based on available tables/figures
-        assets_section = self._build_assets_section(tables_md, bool(figure_images))
-
-        prompt = template.format(
-            min_pages=min_pages,
-            max_pages=max_pages,
-            summary=self._truncate(summary, 10000),
-            assets_section=assets_section,
-        )
-
-        # Note: Language is NOT applied here - content planning stays in English
-        # for better quality. Language is applied at image generation stage.
-
-        result = self._call_multimodal_llm(prompt, figure_images)
-        return self._parse_sections(result, is_slides=True)
+        """Legacy method - redirects to adaptive planning."""
+        content_analysis = self._analyze_content(summary)
+        return self._plan_slides_adaptive(gen_input, summary, tables_md, figure_images, content_analysis)
 
     def _plan_poster(
         self,
@@ -205,51 +366,9 @@ class ContentPlanner:
         tables_md: str,
         figure_images: List[Dict],
     ) -> List[Section]:
-        """Plan poster sections (landscape or portrait A0)."""
-        density = gen_input.config.poster_density.value
-        is_a0 = gen_input.config.poster_format == PosterFormat.PORTRAIT_A0
-
-        # Select guidelines and template based on content type and format
-        if gen_input.is_paper():
-            density_guidelines = PAPER_POSTER_DENSITY_GUIDELINES.get(density, PAPER_POSTER_DENSITY_GUIDELINES["medium"])
-            if is_a0:
-                template = PAPER_POSTER_A0_PLANNING_PROMPT
-                layout_guidelines = PAPER_POSTER_A0_LAYOUT_GUIDELINES.get(density, PAPER_POSTER_A0_LAYOUT_GUIDELINES["medium"])
-            else:
-                template = PAPER_POSTER_PLANNING_PROMPT
-                layout_guidelines = None
-        else:
-            density_guidelines = GENERAL_POSTER_DENSITY_GUIDELINES.get(density, GENERAL_POSTER_DENSITY_GUIDELINES["medium"])
-            if is_a0:
-                template = GENERAL_POSTER_A0_PLANNING_PROMPT
-                layout_guidelines = GENERAL_POSTER_A0_LAYOUT_GUIDELINES.get(density, GENERAL_POSTER_A0_LAYOUT_GUIDELINES["medium"])
-            else:
-                template = GENERAL_POSTER_PLANNING_PROMPT
-                layout_guidelines = None
-
-        # Build assets section based on available tables/figures
-        assets_section = self._build_assets_section(tables_md, bool(figure_images))
-
-        # Format prompt based on template type
-        if is_a0:
-            prompt = template.format(
-                density_guidelines=density_guidelines,
-                layout_guidelines=layout_guidelines,
-                summary=self._truncate(summary, 10000),
-                assets_section=assets_section,
-            )
-        else:
-            prompt = template.format(
-                density_guidelines=density_guidelines,
-                summary=self._truncate(summary, 10000),
-                assets_section=assets_section,
-            )
-
-        # Note: Language is NOT applied here - content planning stays in English
-        # for better quality. Language is applied at image generation stage.
-
-        result = self._call_multimodal_llm(prompt, figure_images)
-        return self._parse_sections(result, is_slides=False)
+        """Legacy method - redirects to adaptive planning."""
+        content_analysis = self._analyze_content(summary)
+        return self._plan_poster_adaptive(gen_input, summary, tables_md, figure_images, content_analysis)
     
     def _build_assets_section(self, tables_md: str, has_figures: bool) -> str:
         """Build the tables/figures section based on available assets."""
@@ -318,11 +437,11 @@ class ContentPlanner:
             logger.info("Calling LLM with text only (no images)")
         
         try:
-            logger.info(f"Calling {self.model} with max_tokens=16000")
+            logger.info(f"Calling {self.model} with max_completion_tokens=16000")
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": content}],
-                max_tokens=16000,
+                max_completion_tokens=16000,
             )
             result = response.choices[0].message.content or ""
             logger.info(f"LLM returned {len(result)} characters")

@@ -16,7 +16,8 @@
 ### 核心功能
 - 📄 **输入**：PDF/DOCX/PPTX/MD 文档
 - 🎨 **输出**：精美的幻灯片（PNG序列 + PDF）或海报
-- 🤖 **技术**：RAG + GPT-4o + Gemini 图像生成
+- 🌍 **多语言**：支持中/英/日/韩等多种输出语言
+- 🤖 **技术**：两阶段自适应规划 + GPT-5.1 + Gemini 图像生成
 
 ### 快速使用
 
@@ -66,8 +67,31 @@ python -m paper2slides \
   --style academic \            # 风格：academic, doraemon, 或自定义
   --length medium \             # 幻灯片长度：short, medium, long
   --density medium \            # 海报密度：sparse, medium, dense
+  --language en \               # 输出语言：en, zh, ja, ko 等
   --fast \                      # 快速模式（跳过 RAG）
   --parallel 2                  # 并行生成数量
+```
+
+#### 多语言输出支持
+系统支持以下语言输出：
+
+| 语言代码 | 语言名称 | 备注 |
+|----------|----------|------|
+| `en` | English | 默认语言 |
+| `zh` | 简体中文 | 技术术语可保留英文 |
+| `zh-tw` | 繁體中文 | 技术术语可保留英文 |
+| `ja` | 日本語 | 技术术语可用片假名 |
+| `ko` | 한국어 | 技术术语可保留英文 |
+| `es` | Español | 西班牙语 |
+| `fr` | Français | 法语 |
+| `de` | Deutsch | 德语 |
+
+```bash
+# 生成中文幻灯片
+python -m paper2slides --input paper.pdf --style academic --language zh
+
+# 生成日文海报
+python -m paper2slides --input paper.pdf --output poster --language ja
 ```
 
 #### 海报格式说明
@@ -127,24 +151,25 @@ Paper2Slides/
        ▼
 ┌─────────────────────────────────┐
 │ 阶段1: RAG (文档解析与索引)     │
-│ - Fast模式: 直接用GPT-4o分析    │
+│ - Fast模式: 直接用GPT-5.1分析   │
 │ - Normal模式: 构建RAG索引       │
+│ - 图片保持原始位置嵌入          │
 └──────┬──────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────┐
 │ 阶段2: Summary (内容提取)       │
-│ - 提取论文元数据                │
+│ - 直接从Markdown提取元数据      │
 │ - 提取各章节内容                │
 │ - 提取表格和图片                │
 └──────┬──────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────┐
-│ 阶段3: Plan (内容规划)          │
-│ - 确定页数和布局                │
-│ - 分配内容到各页                │
-│ - 匹配图表到对应页面            │
+│ 阶段3: Plan (两阶段自适应规划)  │
+│ - Stage 1: 分析实际存在的内容   │
+│ - Stage 2: 自适应生成内容规划   │
+│ - 只为存在的内容创建页面/区块   │
 └──────┬──────────────────────────┘
        │
        ▼
@@ -152,6 +177,7 @@ Paper2Slides/
 │ 阶段4: Generate (图像生成)      │
 │ - 幻灯片：前2页顺序+后续并行    │
 │ - 海报：单张生成（支持横/竖向） │
+│ - 支持多语言输出                │
 │ - 合成为PDF                     │
 └──────┬──────────────────────────┘
        │
@@ -290,24 +316,37 @@ Paper2Slides 采用 **管道式架构**，将复杂任务分解为四个独立�
 
 ##### Fast Mode（快速模式）
 ```python
-# 跳过 RAG 索引，直接用 GPT-4o 多模态分析
+# 跳过 RAG 索引，直接用 GPT-5.1 多模态分析
+# 图片保持在 Markdown 中的原始位置嵌入
 def run_fast_mode(markdown_paths):
     # 1. 读取 Markdown 文本
-    # 2. 提取图片并转换为 base64
-    # 3. 构建多模态输入（文本 + 图片）
-    content_parts = [
-        {"type": "text", "text": markdown_content},
+    # 2. 在原始位置替换图片为 base64 编码
+    content_parts, image_count = _replace_images_with_base64(
+        markdown_content,
+        markdown_base_path
+    )
+
+    # 3. 构建多模态输入（文本和图片交替出现）
+    user_content = [
+        {"type": "text", "text": "# Document Content\n\n"},
+        {"type": "text", "text": "第一段文字..."},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img1}"}},
+        {"type": "text", "text": "图片后的文字..."},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img2}"}},
         ...
     ]
 
-    # 4. 调用 GPT-4o
+    # 4. 调用 GPT-5.1（图片在原始上下文中）
     response = await openai.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": content_parts}]
+        model="gpt-5.1",
+        messages=[{"role": "user", "content": user_content}]
     )
 ```
+
+**改进点**：
+- ✅ 图片保持在文档中的原始位置，不再集中在末尾
+- ✅ 模型能看到图片的上下文（前后文字）
+- ✅ 更准确的图文关联分析
 
 **适用场景**：
 - ✅ 短文档（< 20页）
@@ -380,8 +419,9 @@ def run_normal_mode(input_path):
 
 #### 核心任务
 1. 从 RAG 结果中提取结构化内容
-2. 清理和格式化文本
-3. 提取表格和图片元信息
+2. **直接从 Markdown 提取论文元数据**（标题、作者、机构）
+3. 清理和格式化文本
+4. 提取表格和图片元信息
 
 #### 工作流程
 
@@ -390,26 +430,79 @@ async def run_summary_stage(base_dir, config):
     # 1. 加载 RAG 结果
     rag_checkpoint = load_json(base_dir / "checkpoint_rag.json")
     rag_results = rag_checkpoint["rag_results"]
+    markdown_paths = rag_checkpoint["markdown_paths"]
 
-    # 2. 选择提取器
+    # 2. 直接从 Markdown 提取论文元数据（绕过 RAG）
+    if content_type == "paper" and markdown_paths:
+        paper_metadata = await extract_paper_metadata_from_markdown(
+            markdown_paths=markdown_paths,
+            llm_client=llm_client,
+            model="gpt-5.1",
+            max_chars_per_file=3000  # 只读取文件开头部分
+        )
+        # 用直接提取的结果替换 RAG 的 paper_info
+        rag_results["paper_info"] = [{"answer": paper_metadata, ...}]
+
+    # 3. 选择提取器
     if content_type == "paper":
         content = await extract_paper(
             rag_results=rag_results,
             llm_client=OpenAI(),
-            parallel=True,         # 并行提取各部分
-            max_concurrency=5      # 最多 5 个并发
+            model="gpt-5.1",
+            parallel=True,
+            max_concurrency=5
         )
     else:
         content = await extract_general(rag_results)
 
-    # 3. 提取表格和图片
+    # 4. 提取表格和图片
     origin = extract_tables_and_figures(markdown_paths)
 
-    # 4. 保存结果
-    save_json("checkpoint_summary.json", {
-        "content": content.__dict__,
-        "origin": origin.to_dict()
-    })
+    # 5. 保存结果
+    save_json("checkpoint_summary.json", {...})
+```
+
+#### 直接元数据提取（新功能）
+
+**文件位置**: `paper2slides/summary/paper.py:318`
+
+```python
+async def extract_paper_metadata_from_markdown(
+    markdown_paths: List[str],
+    llm_client,
+    model: str = "gpt-5.1",
+    max_chars_per_file: int = 3000,
+) -> str:
+    """
+    直接从 Markdown 文件提取论文元数据。
+    绕过 RAG 查询，从原始文本中提取更准确的标题和作者信息。
+
+    优势：
+    - 更准确的作者信息（RAG 有时会丢失或混淆作者）
+    - 更完整的机构信息
+    - 支持多文件（多论文）场景
+    """
+
+    # 只读取每个文件的开头部分（元数据通常在文档开头）
+    file_headers = []
+    for md_path in markdown_paths:
+        text = _extract_text_from_markdown(md_path, max_chars=max_chars_per_file)
+        if text:
+            file_headers.append({"filename": ..., "text": text})
+
+    # 根据文件数量选择提示策略
+    if len(file_headers) == 1:
+        prompt = _build_single_file_prompt(file_headers[0]['text'])
+    else:
+        prompt = _build_multi_file_prompt(file_headers)
+
+    response = await llm_client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1,  # 低温度提高准确性
+    )
+
+    return response.choices[0].message.content
 ```
 
 #### 数据模型
@@ -505,182 +598,201 @@ def extract_tables(markdown_content):
 
 ---
 
-### 阶段 3: Plan Stage - 内容规划
+### 阶段 3: Plan Stage - 两阶段自适应内容规划
 
 **文件位置**: `paper2slides/core/stages/plan_stage.py`
 
 #### 核心职责
-- 决定幻灯片页数（根据 length 参数）或海报内容量（根据 density 参数）
-- 分配内容到各页/各区块
-- 为每页/区块匹配合适的图表
+- **Stage 1**：分析文档实际包含的内容元素
+- **Stage 2**：根据实际内容自适应生成规划
+- 只为实际存在的内容创建页面/区块（避免幻觉）
 - 支持两种海报格式：横向 16:9 和 A0 竖向
+- 支持多语言输出
 
-#### 内容规划器
-
-**文件位置**: `paper2slides/generator/content_planner.py:20`
+#### 两阶段规划流程
 
 ```python
 class ContentPlanner:
-    def __init__(self, llm_client, style_type="academic"):
-        self.llm_client = llm_client
-        self.style_type = style_type
+    """使用两阶段自适应规划的内容规划器"""
 
     def plan(self, gen_input: GenerationInput) -> ContentPlan:
-        """生成内容布局方案（幻灯片或海报）"""
+        """两阶段自适应规划"""
 
+        # === Stage 1: 内容分析 ===
+        # 分析文档实际包含哪些内容元素
+        content_analysis = self._analyze_content(summary)
+        # 返回结构如:
+        # {
+        #   "title": "论文标题",
+        #   "authors": "作者列表",
+        #   "content_elements": {
+        #     "problem_or_motivation": {"present": true, "description": "..."},
+        #     "proposed_approach": {"present": true, "description": "..."},
+        #     "experiments_or_evaluation": {"present": false, "description": ""},
+        #     ...
+        #   },
+        #   "key_figures": "Figure 1, Figure 3",
+        #   "key_tables": "Table 1"
+        # }
+
+        # === Stage 2: 自适应规划 ===
+        # 只为存在的内容创建规划
         if gen_input.config.output_type == OutputType.POSTER:
-            return self._plan_poster(gen_input, ...)  # 海报规划
+            sections = self._plan_poster_adaptive(gen_input, ..., content_analysis)
         else:
-            return self._plan_slides(gen_input, ...)  # 幻灯片规划
+            sections = self._plan_slides_adaptive(gen_input, ..., content_analysis)
 
-    def _plan_poster(self, gen_input, summary, tables_md, figure_images):
-        """海报内容规划（支持横向和 A0 竖向）"""
-        density = gen_input.config.poster_density.value
-        is_a0 = gen_input.config.poster_format == PosterFormat.PORTRAIT_A0
-
-        # 根据格式选择对应的提示词模板
-        if is_a0:
-            template = PAPER_POSTER_A0_PLANNING_PROMPT
-            layout_guidelines = PAPER_POSTER_A0_LAYOUT_GUIDELINES[density]
-        else:
-            template = PAPER_POSTER_PLANNING_PROMPT
-            layout_guidelines = None
-
-        # ... 调用 LLM 进行规划
-
-    def _plan_slides(self, gen_input, ...):
-        """幻灯片内容规划"""
-        # 1. 确定页数范围
-        page_config = self._get_page_config(gen_input)
-        # short: 5-8页, medium: 10-13页, long: 15-18页
-
-        # 2. 加载图片为 base64（用于多模态分析）
-        figure_images = self._load_figure_images(gen_input.origin.figures)
-
-        # 3. 构建提示词
-        prompt = PAPER_SLIDES_PLANNING_PROMPT.format(
-            min_pages=page_config["min"],
-            max_pages=page_config["max"],
-            summary=self._format_summary(gen_input.content),
-            tables_md=self._format_tables(gen_input.origin.tables)
-        )
-
-        # 4. 调用 GPT-4o（多模态输入）
-        response = self._call_multimodal_llm(
-            prompt=prompt,
-            images=figure_images  # 让 LLM 看到所有图片
-        )
-
-        # 5. 解析 JSON 响应
-        plan_data = json.loads(response)
-        sections = self._parse_sections(plan_data["slides"])
-
-        return ContentPlan(sections=sections)
+        return ContentPlan(sections=sections, ...)
 ```
 
-#### 提示词结构
+#### Stage 1: 内容分析提示词
 
-**文件位置**: `paper2slides/prompts/content_planning.py:10`
+**文件位置**: `paper2slides/prompts/content_planning.py:56`
 
 ```python
-PAPER_SLIDES_PLANNING_PROMPT = """
-你是一个专业的演示设计师。将以下学术论文组织为 {min_pages}-{max_pages} 页幻灯片。
+CONTENT_ANALYSIS_PROMPT = """分析以下文档摘要，识别实际存在的内容元素。
 
-## 输入信息
-- 论文摘要和各部分内容
-- 可用的表格（HTML格式）
-- 可用的图片（你可以看到图片内容）
-
-## 输出要求
-
-### 1. 内容分配
-- 标题页（1页）：论文标题、作者、机构
-- 背景/动机（1-2页）：研究问题、现有方法局限、重要性
-- 方法/解决方案（3-5页）：
-  * 方法概览（架构图）
-  * 关键模块详细说明
-  * 核心算法/公式
-  * 实现细节
-- 实验/结果（2-4页）：
-  * 数据集和评价指标
-  * 主要结果（对比表格）
-  * 消融实验
-  * 可视化结果
-- 结论（1页）：贡献总结、未来工作
-
-### 2. 内容质量要求
-对于每一页的 `content` 字段：
-- **详细程度**：每页至少 150-200 词
-- **保留细节**：
-  * 具体数字（准确率 92.3%，不要说"超过90%"）
-  * 关键公式（LaTeX 格式）
-  * 技术术语（保持原文）
-  * 步骤说明（算法的每个步骤）
-- **不要过度简化**：从源文本提取和改编，不要只写高层概述
-
-### 3. 图表匹配
-为每页匹配合适的图表：
-
-**tables**（表格列表）：
-- `table_id`: "Table 1"（引用原始表格ID）
-- `extract`: 部分表格 HTML（只包含关键行，不要全部）
-- `focus`: 在这一页重点关注的方面（如"与baseline对比"）
-
-**figures**（图片列表）：
-- `figure_id`: "Figure 1"（引用原始图片ID）
-- `focus`: 图片中重点突出的内容（如"注意力机制模块"）
-
-### 4. 输出格式（JSON）
-{{
-  "slides": [
-    {{
-      "id": "slide_01",
-      "title": "[论文标题]",
-      "content": "[作者列表及机构，完整格式]",
-      "tables": [],
-      "figures": []
-    }},
-    {{
-      "id": "slide_02",
-      "title": "背景与动机",
-      "content": "[详细描述研究问题的背景、现有方法的局限性、为什么这个问题重要。至少150词，包含具体例子和数据。]",
-      "tables": [],
-      "figures": [
-        {{
-          "figure_id": "Figure 1",
-          "focus": "现有方法的架构图，突出其局限性"
-        }}
-      ]
-    }},
-    {{
-      "id": "slide_03",
-      "title": "提出方法：整体架构",
-      "content": "[详细描述方法的整体架构。包含：1）主要组件及其作用，2）组件间的连接关系，3）数据流向。至少200词。]",
-      "tables": [],
-      "figures": [
-        {{
-          "figure_id": "Figure 2",
-          "focus": "整体架构图，标注每个模块"
-        }}
-      ]
-    }},
-    ...
-  ]
-}}
-
-## 当前文档信息
-
-### 论文内容
+## 文档摘要
 {summary}
 
-### 可用表格
-{tables_md}
+## 任务
+识别以下内容元素哪些真正存在于文档中。
+只有在有实质性内容（不仅仅是简短提及）时才标记为存在。
 
-### 可用图片
-[已作为图片附件提供，你可以看到每个图片的内容]
+## 输出格式 (JSON)
+{{
+  "title": "[文档确切标题]",
+  "authors": "[作者（如有）]",
+  "content_elements": {{
+    "problem_or_motivation": {{
+      "present": true/false,
+      "description": "[简述问题/动机内容，如不存在则为空]"
+    }},
+    "background_or_related_work": {{...}},
+    "proposed_approach": {{...}},
+    "technical_details": {{...}},
+    "experiments_or_evaluation": {{...}},
+    "quantitative_results": {{...}},
+    "qualitative_analysis": {{...}},
+    "discussion_or_insights": {{...}},
+    "conclusions_or_contributions": {{...}},
+    "limitations_or_future_work": {{...}}
+  }},
+  "key_figures": "[重要图片ID列表]",
+  "key_tables": "[重要表格ID列表]",
+  "main_topic_summary": "[一句话描述文档主题]"
+}}
 
-现在请生成幻灯片规划方案（JSON格式）：
+## 关键规则
+1. 只有在有实质性内容时才标记 "present": true
+2. 不要假设内容存在 - 只报告摘要中明确出现的内容
+3. 如果只是简短提及而没有详细内容，标记为不存在
+4. 保守判断 - 不确定时标记为不存在
 """
+```
+
+#### Stage 2: 自适应规划
+
+```python
+ADAPTIVE_SLIDES_PLANNING_PROMPT = """根据实际存在的内容创建幻灯片。
+
+## 文档摘要
+{summary}
+
+## 内容分析结果
+{content_analysis}
+
+## 任务
+创建 {min_pages}-{max_pages} 页幻灯片，只使用实际存在的内容。
+
+## 关键规则
+1. **只使用存在的内容** - 不要捏造或幻想内容
+2. **跳过缺失的部分** - 如果没有"实验"内容，不要创建实验页
+3. **适应内容结构** - 幻灯片结构应匹配文档实际内容
+4. **保留细节** - 包含源文档中的具体数字、公式、技术细节
+5. **匹配图表** - 只引用实际存在的图表
+
+## 建议结构（根据实际内容调整）
+1. **标题页**: 文档标题、作者
+2. **内容页**: 只为存在的内容元素创建页面
+   - 只为分析中标记为 present 的元素创建页面
+   - 合理合并相关元素
+   - 大内容可拆分为多页
+3. **总结页**: 只包含实际存在的要点
+"""
+```
+
+#### 内容规划器（更新）
+
+**文件位置**: `paper2slides/generator/content_planner.py:124`
+
+```python
+class ContentPlanner:
+    """使用两阶段自适应规划的内容规划器"""
+
+    def __init__(
+        self,
+        api_key: str = None,
+        base_url: str = None,
+        model: str = "gpt-5.1",  # 默认模型已更新
+    ):
+        self.model = model
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+
+    def plan(self, gen_input: GenerationInput) -> ContentPlan:
+        # Stage 1: 分析内容
+        self.logger.info("Stage 1: Analyzing content structure...")
+        content_analysis = self._analyze_content(summary)
+
+        # Stage 2: 自适应规划
+        if gen_input.config.output_type == OutputType.POSTER:
+            sections = self._plan_poster_adaptive(gen_input, ..., content_analysis)
+        else:
+            sections = self._plan_slides_adaptive(gen_input, ..., content_analysis)
+
+        return ContentPlan(
+            sections=sections,
+            metadata={
+                "content_analysis": content_analysis,  # 保存分析结果
+                ...
+            },
+        )
+
+    def _analyze_content(self, summary: str) -> Dict[str, Any]:
+        """Stage 1: 分析文档实际包含的内容元素"""
+        prompt = CONTENT_ANALYSIS_PROMPT.format(summary=self._truncate(summary, 12000))
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=4000,
+        )
+
+        return json.loads(response.choices[0].message.content)
+
+    def _format_content_analysis(self, analysis: Dict) -> str:
+        """格式化内容分析结果供规划提示词使用"""
+        lines = []
+        lines.append(f"**标题**: {analysis.get('title', '未知')}")
+        lines.append(f"**主题**: {analysis.get('main_topic_summary', '')}")
+        lines.append("")
+        lines.append("**可用内容元素:**")
+
+        elements = analysis.get("content_elements", {})
+        for key, value in elements.items():
+            if isinstance(value, dict) and value.get("present"):
+                name = key.replace("_", " ").title()
+                desc = value.get("description", "")
+                lines.append(f"- {name}: {desc or '存在'}")
+
+        lines.append("")
+        lines.append("**不可用（不要为这些创建部分）:**")
+        for key, value in elements.items():
+            if isinstance(value, dict) and not value.get("present"):
+                name = key.replace("_", " ").title()
+                lines.append(f"- {name}")
+
+        return "\n".join(lines)
 ```
 
 #### 页数配置
@@ -976,71 +1088,64 @@ def _generate_slides(self, plan, gen_input, max_workers):
     return images
 ```
 
-#### 提示词构建
+#### 提示词构建（含多语言支持）
 
 ```python
-# generator/image_generator.py:250
-def _build_prompt(self, section, gen_input):
-    """构建图像生成提示词"""
+# generator/image_generator.py
+def _build_slide_prompt(self, style_name, processed_style, sections_md, layout_rule, slide_info, context_md, language="en"):
+    """构建幻灯片图像生成提示词（支持多语言）"""
+    parts = [FORMAT_SLIDE]
 
-    # 1. 获取风格提示
-    style_hint = self._get_style_hint()
+    # 添加语言提示
+    lang_hint = get_language_hint(language)
+    parts.append(lang_hint)
 
-    # 2. 构建内容描述
-    content_desc = f"""
-## 幻灯片内容
-标题: {section.title}
+    # 添加风格提示
+    if style_name == "custom" and processed_style:
+        parts.append(f"Style: {self._format_custom_style_for_slide(processed_style, language)}")
+    else:
+        parts.append(SLIDE_STYLE_HINTS.get(style_name, SLIDE_STYLE_HINTS["academic"]))
 
-主要内容:
-{section.content}
-"""
+    # 添加布局规则
+    parts.append(layout_rule)
 
-    # 3. 表格处理指令
-    if section.tables:
-        table_instructions = """
-## 表格要求
-- 将提供的 HTML 表格准确转换为视觉表格
-- 保持所有数据完整性（数字、单位、小数点）
-- 使用清晰的边框和对齐
-- 重点突出：{focus}
-"""
-        table_html = "\n\n".join([
-            f"表格 {t.table_id}:\n{t.extract}"
-            for t in section.tables
-        ])
-        content_desc += table_instructions + table_html
+    # 添加可视化提示
+    parts.append(VISUALIZATION_HINTS)
+    parts.append(CONSISTENCY_HINT)
+    parts.append(SLIDE_FIGURE_HINT)
 
-    # 4. 图片处理指令
-    if section.figures:
-        figure_instructions = """
-## 图片要求
-- 参考提供的原始图片
-- 重绘为与幻灯片风格一致的版本
-- 保持图片的核心信息和结构
-- 重点突出：{focus}
-"""
-        content_desc += figure_instructions
+    # 添加内容
+    parts.append(slide_info)
+    parts.append(f"---\nFull presentation context:\n{context_md}")
+    parts.append(f"---\nThis slide content:\n{sections_md}")
 
-    # 5. 组合完整提示词
-    full_prompt = f"""
-{style_hint}
-
-{content_desc}
-
-## 整体要求
-- 创建一张完整的演示幻灯片（16:9 横向）
-- 高分辨率、专业质量
-- 布局清晰，层次分明
-- 确保文本可读性（字体大小适中）
-- 保持视觉一致性
-
-直接输出幻灯片图像。
-"""
-
-    return full_prompt
+    return "\n\n".join(parts)
 ```
 
-#### 风格系统
+#### 语言提示系统
+
+**文件位置**: `paper2slides/prompts/image_generation.py`
+
+```python
+def get_language_hint(language: str) -> str:
+    """根据语言代码返回语言提示"""
+    if language.lower() == "en":
+        return ""  # 英文无需额外提示
+
+    lang_hints = {
+        "zh": "ALL text on this slide must be in Chinese (Simplified Chinese / 简体中文). Technical terms can keep English in parentheses.",
+        "zh-tw": "ALL text on this slide must be in Traditional Chinese (繁體中文). Technical terms can keep English in parentheses.",
+        "ja": "ALL text on this slide must be in Japanese (日本語). Technical terms can use katakana or English in parentheses.",
+        "ko": "ALL text on this slide must be in Korean (한국어). Technical terms can keep English in parentheses.",
+        "es": "ALL text on this slide must be in Spanish (Español).",
+        "fr": "ALL text on this slide must be in French (Français).",
+        "de": "ALL text on this slide must be in German (Deutsch).",
+    }
+
+    return lang_hints.get(language.lower(), f"ALL text on this slide must be in {language}.")
+```
+
+#### 提示词构建
 
 **内置风格** (`prompts/image_generation.py:10`):
 
@@ -2192,10 +2297,11 @@ POSTER_A0_DIMENSIONS = {
 class GenerationConfig:
     output_type: OutputType = OutputType.POSTER
     poster_density: PosterDensity = PosterDensity.MEDIUM
-    poster_format: PosterFormat = PosterFormat.LANDSCAPE  # 新增
+    poster_format: PosterFormat = PosterFormat.LANDSCAPE
     slides_length: SlidesLength = SlidesLength.MEDIUM
     style: StyleType = StyleType.ACADEMIC
     custom_style: Optional[str] = None
+    language: str = "en"  # 输出语言：en, zh, ja, ko 等
 
     def is_portrait_poster(self) -> bool:
         """检查是否为 A0 竖向海报"""
@@ -3794,9 +3900,14 @@ style_reference = {
 
 ---
 
-**生成日期**: 2025-12-10
-**文档版本**: 1.1
-**最后更新**: 添加图像生成提供商系统（OpenRouter/Google GenAI）
+**生成日期**: 2025-12-11
+**文档版本**: 1.2
+**最后更新**:
+- 添加多语言输出支持（中/英/日/韩等）
+- 升级至两阶段自适应内容规划
+- 默认模型更新为 GPT-5.1
+- RAG 阶段图片保持原始位置嵌入
+- 直接从 Markdown 提取论文元数据
 **作者**: Paper2Slides Team
 
 ---

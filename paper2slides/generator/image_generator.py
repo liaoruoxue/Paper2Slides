@@ -64,7 +64,7 @@ class ProcessedStyle:
 
 def process_custom_style(user_style: str, model: str = None) -> ProcessedStyle:
     """Process user's custom style request with LLM."""
-    model = model or os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
+    model = model or os.getenv("LLM_MODEL", "gpt-5.1")
 
     # Use OpenAI client for style processing (separate from image generation)
     api_key = os.getenv("RAG_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")

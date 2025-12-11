@@ -46,6 +46,289 @@ def get_language_instruction(language: str) -> str:
         special_instruction=special_instruction
     )
 
+
+# =============================================================================
+# Stage 1: Content Analysis Prompt
+# =============================================================================
+# This prompt analyzes what content elements actually exist in the document
+# WITHOUT forcing it into predefined categories
+
+CONTENT_ANALYSIS_PROMPT = """Analyze the following document summary and identify what content elements are ACTUALLY PRESENT.
+
+## Document Summary
+{summary}
+
+## Your Task
+Identify which of the following content elements are genuinely present in this document. For each element, only mark it as present if there is SUBSTANTIAL content for it (not just a brief mention).
+
+## Output Format (JSON)
+```json
+{{
+  "title": "[Exact title of the document]",
+  "authors": "[Authors if mentioned, otherwise empty string]",
+  "content_elements": {{
+    "problem_or_motivation": {{
+      "present": true/false,
+      "description": "[Brief description of what problem/motivation is discussed, or empty if not present]"
+    }},
+    "background_or_related_work": {{
+      "present": true/false,
+      "description": "[Brief description of background/related work covered, or empty if not present]"
+    }},
+    "proposed_approach": {{
+      "present": true/false,
+      "description": "[Brief description of what approach/method/framework is proposed, or empty if not present]"
+    }},
+    "technical_details": {{
+      "present": true/false,
+      "description": "[Brief description of technical details like algorithms, formulas, architecture, or empty if not present]"
+    }},
+    "experiments_or_evaluation": {{
+      "present": true/false,
+      "description": "[Brief description of experiments/evaluation performed, or empty if not present]"
+    }},
+    "quantitative_results": {{
+      "present": true/false,
+      "description": "[Brief description of numerical results/metrics, or empty if not present]"
+    }},
+    "qualitative_analysis": {{
+      "present": true/false,
+      "description": "[Brief description of qualitative findings/observations, or empty if not present]"
+    }},
+    "discussion_or_insights": {{
+      "present": true/false,
+      "description": "[Brief description of discussion/insights, or empty if not present]"
+    }},
+    "conclusions_or_contributions": {{
+      "present": true/false,
+      "description": "[Brief description of main conclusions/contributions, or empty if not present]"
+    }},
+    "limitations_or_future_work": {{
+      "present": true/false,
+      "description": "[Brief description if mentioned, or empty if not present]"
+    }}
+  }},
+  "key_figures": "[List figure IDs that are most important, e.g., 'Figure 1, Figure 3']",
+  "key_tables": "[List table IDs that are most important, e.g., 'Table 1, Table 2']",
+  "main_topic_summary": "[One sentence describing what this document is primarily about]"
+}}
+```
+
+## CRITICAL RULES
+1. Only mark an element as "present": true if there is SUBSTANTIAL content for it
+2. Do NOT assume content exists - only report what is explicitly in the summary
+3. If something is only briefly mentioned without details, mark it as NOT present
+4. Be conservative - when in doubt, mark as NOT present
+"""
+
+
+# =============================================================================
+# Stage 2: Adaptive Content Planning Prompts
+# =============================================================================
+# These prompts generate sections based on what content actually exists
+
+ADAPTIVE_SLIDES_PLANNING_PROMPT = """Create slides based on the ACTUAL content available in this document.
+
+## Document Summary
+{summary}
+{assets_section}
+
+## Content Analysis
+The following content elements are available in this document:
+{content_analysis}
+
+## Your Task
+Create {min_pages}-{max_pages} slides using ONLY the content that actually exists.
+
+## CRITICAL RULES
+1. **ONLY use content that exists** - Do NOT invent or hallucinate content
+2. **Skip missing sections** - If "experiments" is not present, do NOT create an experiments slide
+3. **Adapt structure to content** - The slide structure should match what's actually in the document
+4. **Preserve details** - Include specific numbers, formulas, and technical details from the source
+5. **Match figures/tables** - Only reference figures/tables that exist in the assets section
+
+## Output Fields
+- **id**: Slide identifier (e.g., "slide_01")
+- **title**: A concise, specific title for this slide
+- **content**: Detailed text for this slide. Requirements:
+  - Copy and adapt text from the source - do NOT summarize into vague statements
+  - Preserve specific numbers, percentages, metrics
+  - Include key formulas in LaTeX if present in source
+  - Each slide should have substantial content (150+ words except title slide)
+- **tables**: Tables to show (only if they exist in assets)
+  - table_id: e.g., "Table 1"
+  - extract: Partial table HTML with ACTUAL data values
+  - focus: What to emphasize
+- **figures**: Figures to show (only if they exist in assets)
+  - figure_id: e.g., "Figure 1"
+  - focus: What to highlight
+
+## Suggested Slide Structure (adapt based on available content)
+1. **Title slide**: Document title, authors
+2. **Content slides**: Create slides for each PRESENT content element
+   - Only create slides for elements marked as present in the content analysis
+   - Combine related elements if appropriate
+   - Split large elements into multiple slides if needed
+3. **Summary slide**: Key takeaways (only from content that exists)
+
+## Output Format (JSON)
+```json
+{{
+  "slides": [
+    {{
+      "id": "slide_01",
+      "title": "[Document Title]",
+      "content": "[Authors and affiliations if available]",
+      "tables": [],
+      "figures": []
+    }},
+    {{
+      "id": "slide_02",
+      "title": "[Specific topic from content]",
+      "content": "[Detailed content extracted from source...]",
+      "tables": [],
+      "figures": [{{"figure_id": "Figure X", "focus": "..."}}]
+    }}
+  ]
+}}
+```
+"""
+
+
+ADAPTIVE_POSTER_PLANNING_PROMPT = """Create poster sections based on the ACTUAL content available in this document.
+
+## Document Summary
+{summary}
+{assets_section}
+
+## Content Analysis
+The following content elements are available in this document:
+{content_analysis}
+
+## Content Density
+{density_guidelines}
+
+## Your Task
+Create poster sections using ONLY the content that actually exists.
+
+## CRITICAL RULES
+1. **ONLY use content that exists** - Do NOT invent or hallucinate content
+2. **Skip missing sections** - If "experiments" is not present, do NOT create a results section
+3. **Adapt structure to content** - The poster structure should match what's actually in the document
+4. **Preserve details** - Include specific numbers, formulas, and technical details from the source
+5. **Match figures/tables** - Only reference figures/tables that exist in the assets section
+
+## Output Fields
+- **id**: Section identifier (e.g., "header", "main_content", "findings")
+- **title**: A concise, specific title for this section
+- **content**: Detailed text for this section. Requirements:
+  - Copy and adapt text from the source - do NOT summarize into vague statements
+  - Preserve specific numbers, percentages, metrics
+  - Include key formulas in LaTeX if present in source
+  - Adjust detail level based on density setting
+- **tables**: Tables to show (only if they exist in assets)
+- **figures**: Figures to show (only if they exist in assets)
+
+## Suggested Section Structure (adapt based on available content)
+1. **Header**: Title, authors (always present)
+2. **Content sections**: Create sections for PRESENT content elements only
+   - Group related elements logically
+   - Do NOT create empty or hallucinated sections
+3. **Key findings/Summary**: Main takeaways (only from content that exists)
+
+## Output Format (JSON)
+```json
+{{
+  "sections": [
+    {{
+      "id": "header",
+      "title": "[Document Title]",
+      "content": "[Authors if available]",
+      "tables": [],
+      "figures": []
+    }},
+    {{
+      "id": "main_content",
+      "title": "[Specific topic]",
+      "content": "[Detailed content from source...]",
+      "tables": [{{"table_id": "Table X", "extract": "...", "focus": "..."}}],
+      "figures": [{{"figure_id": "Figure X", "focus": "..."}}]
+    }}
+  ]
+}}
+```
+"""
+
+
+ADAPTIVE_POSTER_A0_PLANNING_PROMPT = """Create A0 portrait poster sections based on the ACTUAL content available.
+
+## Document Summary
+{summary}
+{assets_section}
+
+## Content Analysis
+The following content elements are available in this document:
+{content_analysis}
+
+## Content Density and Layout
+{density_guidelines}
+
+{layout_guidelines}
+
+## Your Task
+Create A0 poster sections (841mm x 1189mm, vertical layout) using ONLY content that actually exists.
+
+## CRITICAL RULES
+1. **ONLY use content that exists** - Do NOT invent or hallucinate content
+2. **Skip missing sections** - If an element is not present, do NOT create a section for it
+3. **Adapt structure to content** - Create sections that match the actual document content
+4. **Preserve details** - Include specific numbers, formulas, and technical details
+5. **Match figures/tables** - Only reference assets that actually exist
+
+## Output Fields
+- **id**: Section identifier
+- **title**: Specific title for this section
+- **content**: Detailed text (adjust based on density setting)
+  - Copy from source, preserve specific numbers and formulas
+  - Do NOT make up content that isn't in the source
+- **tables**: Tables with actual data values (only if they exist)
+- **figures**: Figures (only if they exist)
+
+## Section Structure (create ONLY sections for present content)
+- **header**: Always include - title and authors
+- **Additional sections**: Create based on what content actually exists
+  - Name sections appropriately for their content
+  - Do NOT use generic names for non-existent content
+  - Combine or split sections as appropriate for the content
+
+## Output Format (JSON)
+```json
+{{
+  "sections": [
+    {{
+      "id": "header",
+      "title": "[Document Title]",
+      "content": "[Authors and affiliations]",
+      "tables": [],
+      "figures": []
+    }},
+    {{
+      "id": "[appropriate_id]",
+      "title": "[Specific title matching content]",
+      "content": "[Actual content from source...]",
+      "tables": [],
+      "figures": []
+    }}
+  ]
+}}
+```
+
+## IMPORTANT
+- The number of sections should match how much content is actually available
+- Do NOT force a fixed number of sections
+- Quality over quantity - fewer detailed sections is better than many empty/hallucinated ones
+"""
+
 # Paper slides planning prompt
 PAPER_SLIDES_PLANNING_PROMPT = """Organize the document into {min_pages}-{max_pages} slides by distributing the content below.
 

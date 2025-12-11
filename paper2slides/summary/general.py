@@ -73,7 +73,7 @@ def merge_answers(
 async def extract_general(
     rag_results: List[RAGQueryResult],
     llm_client=None,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.1",
     clean_refs: bool = True,
     skip_llm: bool = True,
 ) -> GeneralContent:
@@ -108,7 +108,7 @@ async def extract_general(
     response = llm_client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=8000,
+        max_completion_tokens=8000,
     )
     
     content = response.choices[0].message.content or ""

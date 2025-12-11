@@ -142,7 +142,7 @@ async def _extract_section(
     content: str,
     section: str,
     llm_client,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.1",
 ) -> str:
     """Extract structured content for a single section using LLM.
     
@@ -168,7 +168,7 @@ async def _extract_section(
         lambda: llm_client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=4000,
+            max_completion_tokens=4000,
         )
     )
     
@@ -178,7 +178,7 @@ async def _extract_section(
 async def extract_paper(
     rag_results: RAGResults,
     llm_client,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.1",
     clean_refs: bool = True,
     parallel: bool = True,
     max_concurrency: int = 5,
@@ -318,7 +318,7 @@ If information is missing or unclear for a paper, omit that field.
 async def extract_paper_metadata_from_markdown(
     markdown_paths: List[str],
     llm_client,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.1",
     max_chars_per_file: int = 3000,
 ) -> str:
     """
@@ -357,7 +357,7 @@ async def extract_paper_metadata_from_markdown(
         lambda: llm_client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1500,
+            max_completion_tokens=1500,
             temperature=0.1,  # Low temperature for accuracy
         )
     )
